@@ -1765,3 +1765,5 @@ class MKM:
         df_reversibility = df_reversibility.style.applymap(style_significant, props='color:red;')
         df_reversibility.format({'Reversibility [-]': '{:,.2f}'.format})
         return df_reversibility
+
+
