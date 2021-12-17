@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp 
 from sklearn.linear_model import LinearRegression
 from natsort import natsorted
-from thermo import reaction_equilibium_constant, k_eq_H, k_eq_S, reaction_enthalpy, reaction_entropy
+from thermo import k_eq_H, k_eq_S, reaction_enthalpy, reaction_entropy
 from constants import *
 import graphviz
 
@@ -28,7 +28,6 @@ class MKM:
                                "differential": differential PFR, zero conversion model
                                "dynamic": dynamic CSTR, integral model (finite conversion)
     """  
-#-------------------------------------------------------------------------------------------------------------#
     def __init__(self,
                  name,
                  rm_input_file,
@@ -42,10 +41,9 @@ class MKM:
         self.input_g = g_input_file
         self.t_ref = t_ref
         self.reactor_model = reactor
-        self.inerts = inerts
-        
+        self.inerts = inerts        
         ############################################################################
-        # rm.mkm file processing
+        # rm.mkm parsing
         # - Global reactions of the system
         # - Stoichiometric matrix
         # - Species (gas and surface)
@@ -66,8 +64,7 @@ class MKM:
         self.target_label = global_reaction_label[0]
         self.by_products = global_reaction_index[1:]
         self.by_products_label = global_reaction_label[1:] 
-        self.grl = dict(zip(global_reaction_label, global_reaction_index))      
-        
+        self.grl = dict(zip(global_reaction_label, global_reaction_index))    
         self.gr_string = global_reaction_string
         self.gr_dict = dict(zip(global_reaction_label, global_reaction_string))
         # Convention: global and elementary reaction are separated by 3 blank lines in rm.mkm
@@ -83,13 +80,12 @@ class MKM:
             try: # Extraction of reaction type
                 gas_index = line_list.index([element for idx, element in enumerate(line_list) if '(g)' in element][0])
             except IndexError:
-                reaction_type_list.append('sur')
+                reaction_type_list.append('sur')  # Surface reaction
             else:
                 if gas_index < arrow_index:
-                    reaction_type_list.append('ads')
+                    reaction_type_list.append('ads')  # Adsorption
                 else:
-                    reaction_type_list.append('des')
-
+                    reaction_type_list.append('des')  # Desorption
             for element in line_list: # Extraction of all species
                 if (element == '+') or (element == '->'):
                     pass
@@ -106,8 +102,7 @@ class MKM:
                     
         if inerts != None:
             for i in inerts:
-                species_label.append(i+'(g)')
-        
+                species_label.append(i+'(g)')        
         v_matrix = np.zeros((len(species_label),self.NR)) 
         
         for element in species_label: # Classification of species (sur/gas)
@@ -135,7 +130,6 @@ class MKM:
                         v_matrix[species, reaction] = -2
                     else: 
                         v_matrix[species, reaction] = 2      
-                
         ###########################################################################     
         self.NC_sur = len(species_sur_label)     # Number of surface species
         self.NC_gas = len(species_gas_label)     # Number of gaseous species
@@ -144,8 +138,7 @@ class MKM:
         self.species_sur = species_sur_label     # List of surface intermediates labels
         self.species_gas = species_gas_label     # List of gaseous species labels
         self.species_tot = self.species_sur + self.species_gas  # List of all species
-        self.reaction_type = reaction_type_list  # List with description of each elementary step 
-         
+        self.reaction_type = reaction_type_list  # List with description of each elementary step          
         self.masses = []
         for i in self.species_gas:
             mw = 0.0
@@ -187,12 +180,10 @@ class MKM:
                         pass
                     else:
                         self.m[i] = self.masses[j]/(N_AV*1000)
-        
         ###########################################################################
-        # g.mkm file processing 
+        # g.mkm parsing 
         # - System energetics (H, S and G)
-        ###########################################################################   
-        
+        ###########################################################################        
         e = open('./{}'.format(g_input_file), 'r')
         lines = e.readlines()
         for i in range(len(lines)):
@@ -202,8 +193,7 @@ class MKM:
         H_ts = np.zeros(self.NR)
         H_species = np.zeros(self.NC_tot)
         S_ts = np.zeros(self.NR)
-        S_species = np.zeros(self.NC_tot)
-        
+        S_species = np.zeros(self.NC_tot)        
         for i in range(self.NR):
             H_ts[i] = float(E_ts[i].split()[0])
             S_ts[i] = float(E_ts[i].split()[-1]) / t_ref   
@@ -213,20 +203,16 @@ class MKM:
                 S_species[i] = float(E_species[i].split()[-1]) / t_ref
             else:
                 H_species[i] = 0.0
-                S_species[i] = 0.0
-            
+                S_species[i] = 0.0            
         self.h_species = H_species
         self.s_species = S_species
         self.g_species = H_species - t_ref * S_species
         self.h_ts = H_ts
         self.s_ts = S_ts
-        self.g_ts = H_ts - t_ref * S_ts 
-        
-        ###########################################################################   
-        
+        self.g_ts = H_ts - t_ref * S_ts         
+        ###########################################################################          
         # Convert global reaction string to stoichiometric vectors
-        self.v_global = np.zeros((self.NC_tot,self.NGR))
-                                
+        self.v_global = np.zeros((self.NC_tot,self.NGR))                                
         for i in range(self.NC_tot):
             for j in range(self.NGR):
                 reaction_list = self.gr_string[j].split()
@@ -246,15 +232,12 @@ class MKM:
                         if reaction_list.index('3'+self.species_tot[i].strip('(g)')) < arrow_index:
                             self.v_global[i,j] = -3
                         else:
-                            self.v_global[i,j] = 3
-                            
+                            self.v_global[i,j] = 3                            
         for i in range(self.NC_tot):
             for j in range(self.NGR):
                 if (i < self.NC_sur) and (self.species_tot[i]+'(g)' in self.species_gas):
-                    self.v_global[i, j] = 0        
-                                
-        #############################################################################
-        
+                    self.v_global[i, j] = 0                                  
+        #############################################################################        
         # stoichiometric vector for global_reactions
         self.stoich_numbers = np.zeros((self.NR, self.NGR))
         for i in range(self.NGR):
@@ -262,8 +245,7 @@ class MKM:
             self.stoich_numbers[:,i] = np.round(sol[0], decimals=2)
         for i in range(self.NGR):
             for j in range(self.NR):
-                self.stoich_numbers[j, i] = int(self.stoich_numbers[j, i])
-        
+                self.stoich_numbers[j, i] = int(self.stoich_numbers[j, i])        
         self.dh_reaction = np.zeros(self.NR)
         self.ds_reaction = np.zeros(self.NR)
         self.dg_reaction = np.zeros(self.NR)     
@@ -272,8 +254,7 @@ class MKM:
         self.dg_barrier = np.zeros(self.NR)
         self.dh_barrier_rev = np.zeros(self.NR)    
         self.ds_barrier_rev = np.zeros(self.NR)      
-        self.dg_barrier_rev = np.zeros(self.NR)  
-        
+        self.dg_barrier_rev = np.zeros(self.NR)        
         for i in range(self.NR):
             self.dh_reaction[i] = np.sum(self.v_matrix[:,i]*np.array(self.h_species))
             self.ds_reaction[i] = np.sum(self.v_matrix[:,i]*np.array(self.s_species))
@@ -283,8 +264,7 @@ class MKM:
             his = sum([self.h_species[j]*self.v_matrix[j,i]*(-1) for j in ind])
             sis = sum([self.s_species[j]*self.v_matrix[j,i]*(-1) for j in ind])
             gis = sum([self.g_species[j]*self.v_matrix[j,i]*(-1) for j in ind])
-            condition2 = self.g_ts[i] > max(gis, gis+self.dg_reaction[i])
-            
+            condition2 = self.g_ts[i] > max(gis, gis+self.dg_reaction[i])            
             if condition1 and condition2: # Activated elementary reaction
                 self.dh_barrier[i] = self.h_ts[i] - his
                 self.dh_barrier_rev[i] = self.dh_barrier[i] - self.dh_reaction[i]
@@ -309,19 +289,16 @@ class MKM:
                     self.dg_barrier_rev[i] = 0.0                    
         
         self.ODE_params = [1e-12,1e-70,1.0E4,1.0E4]                            
-        self.v_f = self.__stoic_forward()
-        self.v_b = self.__stoic_backward()   
+        self.v_f = stoic_forward(self.v_matrix)
+        self.v_b = stoic_backward(self.v_matrix)   
         
         # Controls on passed arguments:
         control_NR = (self.v_matrix.shape[1] == len(self.g_ts))
         control_NC_sur = ((self.v_matrix.shape[0]-self.NC_gas) == len(self.species_sur))
-        control_NC_gas = (self.NC_gas == len(self.masses))
         if not control_NR:
             print("No match between number of elementary reactions and provided Gibbs TS in g.mkm")
         if not control_NC_sur:
             print("Problem related to the number of surface intermediates!")
-        if not control_NC_gas:
-            print("Problem related to the number of gaseous species!")
         
         r = []
         for i in range(self.NR):
@@ -336,10 +313,9 @@ class MKM:
                                      columns=['$\Delta$G_reaction / eV',
                                               '$\Delta$G_barrier / eV',
                                               '$\Delta$G_barrier,reverse / eV'])
-        self.df_gibbs.index.name = 'reaction'
-        
+        self.df_gibbs.index.name = 'reaction'        
 #-------------------------------------------------------------------------------------------------------------#
-    def reactor(self, reactor):
+    def set_reactor(self, reactor):
         """
         Define the reactor model 
         Two options:
@@ -352,20 +328,21 @@ class MKM:
         return "Reactor model: {}".format(reactor)
     
     def CSTR_params(self,
-                    radius=None,
-                    length=None,
-                    Q=None,
-                    m_cat=None,
-                    S_BET=None,
+                    radius,
+                    length,
+                    Q,
+                    m_cat,
+                    S_BET,
                     A_site=1.0E-19,
                     verbose=0):
         """ 
         Method for defining the Dynamic CSTR settings.
         Args:
-            volume(float): Reactor volume in [m3]
+            radius(float): Reactor inner radius in [m]
+            length(float): reactor length in [m]
             Q(float): inlet volumetric flowrate in [m3/s]
             m_cat(float): catalyst mass in [kg]
-            S_BET(float): BET surface in m2/[kg_cat]
+            S_BET(float): BET surface in [m2/kg_cat]
             A_site(float): Area of the active site in [m2]. Default to 1.0E-19
         """
         
@@ -497,8 +474,6 @@ class MKM:
                     for k in range(len(b)):
                         rn.edge(self.species_tot[a[i]],
                                 self.species_tot[b[k]])
-                                #'R{}'.format(j+1),
-                                #style='dashed')
             else:                
                 for i in range(len(a)):
                     for k in range(len(b)):
@@ -519,7 +494,7 @@ class MKM:
         """
         Function that applies a BEP relation to the selected elementary reaction.
         
-            dh_barrier = q + m * dh_reaction
+            dh_barrier = q + m * dh_reaction [eV]
         
         Args:
             reaction(str): reaction string. Ex: "R12"
@@ -538,8 +513,7 @@ class MKM:
         Function that applies a TS scaling relation to the selected elementary reaction.
         NB Apply only if in g.mkm the intermediate states species enthalpies are from LSR
         
-            dh_barrier = q + m * dh_ads(initial/final state)
-        
+            dh_barrier = q + m * dh_ads(initial/final state)        
         Args:
             reaction(str): reaction string. Ex: "R12"
             q(float): intercept of the line
@@ -591,8 +565,7 @@ class MKM:
             m = scaling_matrix_ts[:, 1]
             for j in range(self.NR):
                 self.apply_ts_scaling("R{}".format(j+1), q[j], m[j], initial_state=initial_state)
-            self.bep = False
-        
+            self.bep = False        
         self.lsr_mode = True # possible to compute scaled-DRC
         self.scaling_matrix_h = scaling_matrix_h
         self.scaling_matrix_ts = scaling_matrix_ts   
@@ -614,8 +587,7 @@ class MKM:
             DGR_model[i] = DHR_model[i] - temperature * DSR_model[i] * cf
             DHR_database[i] = reaction_enthalpy(self.gr_string[i], temperature)
             DSR_database[i] = reaction_entropy(self.gr_string[i], temperature)
-            DGR_database[i] = DHR_database[i] - temperature * DSR_database[i]
-            
+            DGR_database[i] = DHR_database[i] - temperature * DSR_database[i]            
         print("{}: Thermochemistry".format(self.name))
         print("Temperature: {}K".format(temperature))
         print("")
@@ -643,12 +615,9 @@ class MKM:
             TCI(float): Thermodynamic Consistency Index
                         A measure of the quality of the microkinetic model at the
                         defined temperature
-        """        
-        
+        """     
         k_h = np.exp(-self.dh_reaction/(K_B*temperature)) 
         k_s = np.exp(self.ds_reaction/K_B) 
-        k_eq = np.exp(-self.dg_reaction/(K_B*temperature))
-        v_rank = np.linalg.matrix_rank(self.v_matrix)
         keq_H_model = np.zeros(self.NGR)
         keq_S_model = np.zeros(self.NGR)
         keq_model = np.zeros(self.NGR)
@@ -661,9 +630,7 @@ class MKM:
             keq_S_model[i] = np.prod(k_s ** self.stoich_numbers[:,i])
             keq_S_database[i] = k_eq_S(self.gr_string[i], temperature)
             keq_model[i] = keq_H_model[i] * keq_S_model[i]           
-            keq_database[i] = keq_H_database[i] * keq_S_database[i]            
-        TCI = np.sum((keq_database - keq_model)**2)         
-        
+            keq_database[i] = keq_H_database[i] * keq_S_database[i]                    
         print(" {}: Thermodynamic consistency analysis".format(self.name))
         print(" Temperature = {}K".format(temperature))
         print("")
@@ -674,33 +641,7 @@ class MKM:
             print("Database: keqH={:0.2e}    keqS={:0.2e}    Keq={:0.2e}".format(keq_H_database[global_reaction], keq_S_database[global_reaction], keq_database[global_reaction]))
             print("----------------------------------------------------------------------------------")
             print("")
-        return TCI
-        
-    def __stoic_forward(self):
-        """
-        Filter function for the stoichiometric matrix.
-        Negative elements are considered and changed of sign in order to 
-        compute the direct reaction rates.
-        """        
-        mat = np.zeros([self.v_matrix.shape[0], self.v_matrix.shape[1]])
-        for i in range(mat.shape[0]):
-            for j in range(mat.shape[1]):
-                if self.v_matrix[i][j] < 0:
-                    mat[i][j] = -self.v_matrix[i][j]
-        return mat
-
-    def __stoic_backward(self):
-        """
-        Filter function for the stoichiometric matrix.
-        Positive elements are considered and kept in order to compute 
-        the reverse reaction rates.
-        """
-        mat = np.zeros([self.v_matrix.shape[0], self.v_matrix.shape[1]])
-        for i in range(mat.shape[0]):
-            for j in range(mat.shape[1]):
-                if self.v_matrix[i][j] > 0:
-                    mat[i][j] = self.v_matrix[i][j]
-        return mat        
+        return None
         
     def kincos_calc(self, temperature, area_active_site=1e-19):
         """
@@ -714,15 +655,12 @@ class MKM:
         kd = np.zeros(len(self.reaction_type))  # Direct constant
         kr = np.zeros(len(self.reaction_type))  # Reverse constant        
         for reaction in range(self.NR):
-            Keq[reaction] = np.exp(-self.dh_reaction[reaction] / temperature / K_B) * np.exp(self.ds_reaction[reaction] / K_B)
-            if self.reaction_type[reaction] == 'ads': # Adsorption
+            Keq[reaction] = np.exp(-self.dg_reaction[reaction] / temperature / K_B)
+            if self.reaction_type[reaction] == 'ads': 
                 A = area_active_site / (2 * np.pi * self.m[reaction] * K_BU * temperature) ** 0.5
                 kd[reaction] = A * np.exp(-self.dg_barrier[reaction] / K_B / temperature)
                 kr[reaction] = kd[reaction] / Keq[reaction] 
-            elif self.reaction_type[reaction] == 'des': # Desorption
-                #A = area_active_site / (2 * np.pi * self.m[reaction] * K_BU * temperature) ** 0.5
-                #kr[reaction] = A * np.exp(self.dg_barrier_rev[reaction] / K_B / temperature)
-                #kd[reaction] = kr[reaction] / (Keq[reaction]**(-1))
+            elif self.reaction_type[reaction] == 'des': 
                 kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
             else:  # Surface reaction
@@ -742,16 +680,13 @@ class MKM:
         if index != None:
             rate_direct = kdir[index]*np.prod(y**(self.v_f[:,index]))
             rate_reverse = krev[index]*np.prod(y**(self.v_b[:,index]))
-            return rate_direct - rate_reverse
-        
+            return rate_direct - rate_reverse        
         rate_direct = np.zeros(self.NR) 
         rate_reverse = np.zeros(self.NR) 
-        net_rate = np.zeros(self.NR)
         for reaction in range(self.NR):
             rate_direct[reaction] = kdir[reaction]*np.prod(y**(self.v_f[:,reaction]))  
             rate_reverse[reaction] = krev[reaction]*np.prod(y**(self.v_b[:,reaction])) 
-            net_rate[reaction] = rate_direct[reaction] - rate_reverse[reaction]
-        return net_rate
+        return rate_direct - rate_reverse
         
     def differential_pfr(self, time, y, kd, ki):
         """
@@ -769,8 +704,8 @@ class MKM:
         Returns the rhs of the ODE system.
         Reactor model: dynamic CSTR
         Args:
-            P_in(ndarray): inlet partial pressures of gasp species in Pascal
-            temperature(float): temperature in Kelvin
+            P_in(ndarray): inlet partial pressures of gas species in Pascal [Pa]
+            temperature(float): temperature in Kelvin [K]
         """
         # Surface species
         dy = (self.v_matrix @ self.rate_calc(y, kd, ki))  
@@ -795,23 +730,21 @@ class MKM:
         Helper function
         """
         kd, ki = self.kincos_calc(temperature)         
-        if self.reactor_model == 'dynamic':  
-            r = solve_ivp(dy,
-                          (0.0, t_final),
-                          y_0,
-                          method='BDF',
-                          events=end_events,
-                          jac=jacobian_matrix,
-                          args=[kd, ki, P_in, temperature],
-                          atol=abstol,
-                          rtol=reltol,
-                          max_step=dt_max)
-            return r
-        else:  
-            r = solve_ivp(dy, (0.0, t_final), y_0, method='BDF',
-                          events=end_events, jac=jacobian_matrix,
-                          args=[kd,ki], atol=abstol, rtol=reltol, max_step=dt_max)             
-            return r    
+        if self.reactor_model == 'dynamic':
+            args_list = [kd, ki, P_in, temperature]
+        else:
+            args_list = [kd, ki]
+        r = solve_ivp(dy,
+                      (0.0, t_final),
+                      y_0,
+                      method='BDF',
+                      events=end_events,
+                      jac=jacobian_matrix,
+                      args=args_list,
+                      atol=abstol,
+                      rtol=reltol,
+                      max_step=dt_max)
+        return r    
     
     def single_run(self,
                    temperature,
@@ -844,16 +777,14 @@ class MKM:
                                                                     list(np.array(gas_composition)*100.0))]
             gas_string = 'Gas composition: '
             for i in str_list:
-                gas_string = gas_string + i
-            print(gas_string)
-        
+                gas_string += i
+            print(gas_string)        
         y_0 = np.zeros(self.NC_tot)
         if initial_conditions is None:  # Convention: first surface species is the active site
             y_0[0] = 1.0
         else:
             y_0[:self.NC_sur] = initial_conditions[:self.NC_sur]
-        y_0[self.NC_sur:] = pressure*np.array(gas_composition)    
-            
+        y_0[self.NC_sur:] = pressure * np.array(gas_composition)               
         if np.sum(y_0[:self.NC_sur]) != 1.0:
             raise ValueError('Wrong initial surface coverage: the sum of the provided coverage is not equal 1.')
         if sum(gas_composition) != 1.0:
@@ -864,8 +795,7 @@ class MKM:
         if temperature < 0.0:
             raise ValueError('Wrong temperature (T > 0 K)')        
         if pressure < 0.0:
-            raise ValueError('Wrong pressure (P > 0 Pa)')
-        
+            raise ValueError('Wrong pressure (P > 0 Pa)')        
         results_sr = []                      # solve_ivp solver output
         final_sr = []                        # final Value of derivatives
         yfin_sr = np.zeros((self.NC_tot))    # steady-state output [-]
@@ -889,7 +819,7 @@ class MKM:
                                                      self.dynamic_cstr,
                                                      temperature,
                                                      *self.ODE_params,
-                                                     P_in=y_0[self.NC_sur:])    # scipy output        
+                                                     P_in=y_0[self.NC_sur:])  # scipy output        
             final_sr = self.dynamic_cstr(results_sr.t[-1], 
                                          results_sr.y[:,-1], 
                                          *self.kincos_calc(temperature), 
@@ -994,8 +924,7 @@ class MKM:
            It contains the reaction rate of the called global reaction over
            the selected temperature-pressure domain.
         """
-        r_matrix = np.zeros((len(temp_vector), len(p_vector)))
-        
+        r_matrix = np.zeros((len(temp_vector), len(p_vector)))        
         for i in range(len(temp_vector)):
             for j in range(len(p_vector)):
                 run = self.single_run(temp_vector[i],
@@ -1035,8 +964,7 @@ class MKM:
         """
         Function that evaluates the apparent activation energy of the selected global reaction.
         It solves an ODE stiff system for each temperature studied until the steady state convergence.
-        From the steady state output, the global reaction rates are evaluated.
-        
+        From the steady state output, the global reaction rates are evaluated.        
         Args:
             temp_range(list): List containing 3 items: 
                 T_range[0]: Lower temperarure range bound [K]
@@ -1065,15 +993,11 @@ class MKM:
         for i in str_list:
             gas_string = gas_string + i
         print(gas_string)        
-        print('')
-            
+        print('')            
         if (global_reaction_label != self.target_label) and (global_reaction_label not in self.by_products_label):
-            raise Exception('Unexisting global process string!')
-        
-        reaction_label = self.grl[global_reaction_label]
+            raise Exception('Unexisting global process string!')        
         temperature_vector = list(range(temp_range[0], temp_range[1], temp_range[2]))        
         r_ea = np.zeros((len(temperature_vector),1))     # production rate [1/s]      
-        
         for i in range(len(temperature_vector)): 
             t0 = time.time()            
             run = self.single_run(temperature_vector[i],
@@ -1100,8 +1024,7 @@ class MKM:
                   gas_comp_dict,
                   eapp, 
                   r_squared]
-        output_dict = dict(zip(keys,values)) 
-        
+        output_dict = dict(zip(keys,values))         
         fig_ea = plt.figure(1, dpi=500)   
         plt.locator_params(axis='y', nbins=5)
         plt.locator_params(axis='x', nbins=5)
@@ -1138,8 +1061,7 @@ class MKM:
         """
         Function that evaluates the apparent activation energy of the selected reaction.
         It solves an ODE stiff system for each temperature studied until the steady state convergence.
-        From the steady state output, the global reaction rates are evaluated.
-        
+        From the steady state output, the global reaction rates are evaluated.        
         Args:
             temp_range(list): List containing 3 items: 
                 T_range[0]: Lower temperarure range bound [K]
@@ -1168,18 +1090,12 @@ class MKM:
         for i in str_list:
             gas_string = gas_string + i
         print(gas_string)
-        print('')
-            
+        print('')            
         if (global_reaction_label != self.target_label) and (global_reaction_label not in self.by_products_label):
             raise Exception('Unexisting global process string!')
         
-        reaction_label = self.grl[global_reaction_label]
         temperature_vector = [temperature - delta_temperature, temperature + delta_temperature]        
-        results_ea = []                                                  # solve_ivp output
-        final_ea = []                                                    # Final Value of derivatives
-        yfin_ea = np.zeros((len(temperature_vector), self.NC_sur))  # Steady-state coverage [-]
-        r_ea = np.zeros((len(temperature_vector),1))                # production rate [1/s]         
-        
+        r_ea = np.zeros((len(temperature_vector),1))                    
         for i in range(len(temperature_vector)): 
             t0 = time.time()            
             run = self.single_run(temperature_vector[i],
@@ -1191,12 +1107,10 @@ class MKM:
             print('Temperature = {}K    CPU Time: {:.2f}s'.format(temperature_vector[i],
                                                                   time.time() -t0))  
         eapp = (R / 1000.0) * temperature**2*(np.log(r_ea[1]) - np.log(r_ea[0])) / (2*delta_temperature)
-        
         keys = []
         values = []
         output_dict = dict(zip(keys,values))
-        return eapp[0]
-    
+        return eapp[0]    
         
     def __calc_reac_order(self, partial_pressure, reaction_rate):
         """
@@ -1256,9 +1170,7 @@ class MKM:
                                                                       global_reaction_label))
         print('')
         print('Temperature = {}K    Pressure = {:.1f}bar'.format(temperature, pressure/1e5))
-        print('')
-        
-        reaction_label = self.grl[global_reaction_label]
+        print('')        
         for i in range(n_runs):                   
             t0 = time.time()            
             run = self.single_run(temperature,
@@ -1272,7 +1184,6 @@ class MKM:
                                                               time.time() -t0))
         
         napp, r_squared = self.__calc_reac_order(pressure*composition_matrix[:,index], r_napp)
-        
         keys = ['T', 
                 'P',
                 'N',
@@ -1288,7 +1199,6 @@ class MKM:
                   napp,
                   r_squared]        
         output_dict = dict(zip(keys,values))
-        
         fig_na = plt.figure(2, dpi=500)          
         plt.scatter(np.log(pressure*composition_matrix[:,index]), np.log(r_napp), lw=2)
         m, b = np.polyfit(np.log(pressure*composition_matrix[:,index]), np.log(r_napp), 1)
@@ -1343,12 +1253,9 @@ class MKM:
             raise Exception('Reaction label must be related to a global reaction!')            
         if dg > 0.1:
             raise Exception('Define a dg < 0.1 eV: the lower the value, the more accurate the DRC/DSC values.')       
-        switch_ts_int = 0
-        if 'R' in ts_int_label: 
-            pass
-        else:
-            switch_ts_int = 1
-            
+        switch_ts_int = 0 # Switch elementary step/intermediate
+        if 'R' not in ts_int_label: 
+            switch_ts_int = 1            
         index = 0
         if switch_ts_int == 0:
             index = int(ts_int_label[1:]) -1 
@@ -1372,16 +1279,11 @@ class MKM:
                                                                     list(np.array(gas_composition)*100.0))]
             gas_string = 'Gas composition: '
             for i in str_list:
-                gas_string = gas_string + i
+                gas_string += i
             print(gas_string)
-            print('')        
-        
-        g_int = self.g_species.copy()
-        g_tr_st = self.g_ts.copy()
+            print('')      
         r = np.zeros(2) 
         s = np.zeros(2) 
-        reaction_label = self.grl[global_reaction_label]
-        
         if switch_ts_int == 0:    # Transition state
             if self.g_ts[index] != 0.0:  # Originally activated reaction
                 for i in range(2):             
@@ -1414,7 +1316,6 @@ class MKM:
                 dsc = (-K_B*temperature) * (np.log(s[0])-np.log(s[1])) / (2*dg)
             else:  # Originally unactivated reaction
                 for i in range(2):
-                    g_tr_st = self.g_ts.copy()
                     mk_object = MKM('i',
                                     self.input_rm,
                                     self.input_g,
@@ -1447,8 +1348,7 @@ class MKM:
                 drc = (-K_B*temperature) * (np.log(r[1])-np.log(r[0])) / dg
                 dsc = (-K_B*temperature) * (np.log(s[1])-np.log(s[0])) / dg         
         else:  # Surface intermediate            
-            for i in range(2):
-                g_int = self.g_species.copy()         
+            for i in range(2):         
                 mk_object = MKM('i',
                                 self.input_rm,
                                 self.input_g,
@@ -1509,10 +1409,9 @@ class MKM:
                    verbose=0):
         """
         Calculates the degree of rate control(DRC) and selectivity control(DSC)
-        for the selected transition states or intermediate species as function of temperature
-        
+        for the selected transition states or intermediate species as function of temperature.        
         Args:
-            temperature(nparray): Temperature of the experiment [K]
+            temp_vector(nparray): Temperature vector [K]
             pressure(float): Partial pressure of the gaseous species [Pa]
             gas_composition(list): Molar fraction of the gaseous species [-]
             global_reaction_label(str): Global reaction for which DRC/DSC are computed
@@ -1545,8 +1444,7 @@ class MKM:
                 col.append('DSC_{}'.format(ts_int_label[i]))
             
             df_drsc_temp = pd.DataFrame(np.round(drsc_temp, decimals=2), 
-                                          columns=col)
-                                 
+                                          columns=col)                                 
             fig = plt.figure(dpi=500)
             for i in range(len(ts_int_label)):
                 plt.plot(temp_vector, drc_array[:, i], label=ts_int_label[i])
@@ -1564,9 +1462,7 @@ class MKM:
                                                             temp_vector[-1],
                                                             int(pressure/1e5)))
             plt.show()                                
-            return df_drsc_temp
-            
-                                 
+            return df_drsc_temp   
         else:  # single species/ts            
             drc_array = np.zeros(len(temp_vector))
             dsc_array = np.zeros(len(temp_vector))
@@ -1583,7 +1479,6 @@ class MKM:
                                         axis=1)
             df_drsc_temp = pd.DataFrame(np.round(drsc_temp, decimals=2), 
                                           columns=['T[K]', 'DRC', 'DSC'])
-        
             fig = plt.figure(dpi=400)
             plt.plot(temp_vector, drc_array)
             plt.grid()
@@ -1609,8 +1504,7 @@ class MKM:
                       dg=1.0E-6):
         """
         Wrapper function that calculates the degree of rate control of all
-        intermediates and transition states at the desired conditions 
-        
+        intermediates and transition states at the desired conditions.        
         Args:
             temperature(float): Temperature of the experiment [K]
             pressure(float): Partial pressure of the gaseous species [Pa]
@@ -1633,13 +1527,11 @@ class MKM:
         gas_string = 'Gas composition: '
         for i in str_list:
             gas_string = gas_string + i
-        print(gas_string)
-        
+        print(gas_string)        
         if (global_reaction_label != self.target_label) and (global_reaction_label not in self.by_products_label):
             raise Exception('Unexisting global reaction string.')        
         if dg > 0.1:
             raise Exception('Too high perturbation (recommended lower than 1e-6 eV)')
-        
         drc_ts = np.zeros(self.NR)
         dsc_ts = np.zeros(self.NR)
         drc_int = np.zeros(self.NC_sur)
@@ -1654,7 +1546,6 @@ class MKM:
                                                                                   'R{}'.format(reaction+1),
                                                                                   verbose=1, 
                                                                                   initial_conditions=initial_conditions)           
-                
         for species in range(self.NC_sur):
             print('')
             print('{}'.format(self.species_sur[species]))
@@ -1667,8 +1558,7 @@ class MKM:
                                                                                   initial_conditions=initial_conditions)            
         r = []
         for i in range(self.NR):
-            r.append('R{}'.format(i+1))
-            
+            r.append('R{}'.format(i+1))            
         drsc_ts = np.concatenate((np.array([drc_ts]).T,
                                   np.array([dsc_ts]).T), 
                                  axis=1)
@@ -1682,8 +1572,7 @@ class MKM:
             return props if abs(v) >= 0.01 else None
         
         df_drsc_ts = df_drsc_ts.style.applymap(style_significant, props='color:red;').applymap(lambda v: 'opacity: 50%;' if abs(v) < 0.01 else None)
-        df_drsc_ts.format({'DRC': '{:,.2f}'.format, 'DSC': '{:,.2f}'.format})
-        
+        df_drsc_ts.format({'DRC': '{:,.2f}'.format, 'DSC': '{:,.2f}'.format})        
         drsc_int = np.concatenate((np.array([drc_int]).T,
                                    np.array([dsc_int]).T),
                                   axis=1)
@@ -1694,8 +1583,7 @@ class MKM:
                                                      int(temperature), 
                                                      int(pressure/1e5)))
         df_drsc_int = df_drsc_int.style.applymap(style_significant, props='color:red;').applymap(lambda v: 'opacity: 50%;' if abs(v) < 0.01 else None)
-        df_drsc_int.format({'DRC': '{:,.2f}'.format, 'DSC': '{:,.2f}'.format})
-        
+        df_drsc_int.format({'DRC': '{:,.2f}'.format, 'DSC': '{:,.2f}'.format})        
         return df_drsc_ts, df_drsc_int        
        
     def __z_calc(self, y, kdir, krev):
@@ -1741,8 +1629,7 @@ class MKM:
         gas_string = 'Gas composition: '
         for i in str_list:
             gas_string = gas_string + i
-        print(gas_string)
-        
+        print(gas_string)        
         run = self.single_run(temperature,
                               pressure,
                               gas_composition,
@@ -1765,5 +1652,3 @@ class MKM:
         df_reversibility = df_reversibility.style.applymap(style_significant, props='color:red;')
         df_reversibility.format({'Reversibility [-]': '{:,.2f}'.format})
         return df_reversibility
-
-

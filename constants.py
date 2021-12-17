@@ -1,4 +1,5 @@
 # constants used in pymkm
+import numpy as np
 
 R = 8.31439                 # J/mol/K
 N_AV = 6.02283E23           # 1/mol
@@ -25,3 +26,29 @@ m_dict = {'C':12.0107, 'H':1.00784, 'O':15.9994,
 
 int_set = {'1','2','3','4','5','6','7','8','9','10'}
 integers = {'1','2','3','4','5','6','7','8','9','0'}
+
+def stoic_forward(matrix):
+    """
+    Filter function for the stoichiometric matrix.
+    Negative elements are considered and changed of sign in order to 
+    compute the direct reaction rates.
+    """        
+    mat = np.zeros([matrix.shape[0], matrix.shape[1]])
+    for i in range(mat.shape[0]):
+        for j in range(mat.shape[1]):
+            if matrix[i][j] < 0:
+                mat[i][j] = - matrix[i][j]
+    return mat
+
+def stoic_backward(matrix):
+    """
+    Filter function for the stoichiometric matrix.
+    Positive elements are considered and kept in order to compute 
+    the reverse reaction rates.
+    """
+    mat = np.zeros([matrix.shape[0], matrix.shape[1]])
+    for i in range(mat.shape[0]):
+        for j in range(mat.shape[1]):
+            if matrix[i][j] > 0:
+                mat[i][j] = matrix[i][j]
+    return mat 
