@@ -705,19 +705,18 @@ class MKM:
 
     def net_rate(self, y, kd, ki):
         """
-        Returns net reaction rate for each elementary reaction step.        
+        Returns the net reaction rate for each elementary reaction.
         Args:
-            y(nparray): surface coverage + partial pressures array [-/Pa].
-            kd,ki(nparray): kinetic constants of the direct/reverse reaction steps.            
+            y(ndarray): surface coverage + partial pressures array [-/Pa].
+            kd, ki(ndarray): kinetic constants of the direct/reverse steps.
         Returns:
-            (nparray): Net reaction rate of each elementary reaction [1/s].
+            ndarray containing the net reaction rate for all the steps [1/s].
         """
         net_rate = np.zeros(len(kd))
         v_ff = self.v_f
         v_bb = self.v_b
-        for i in range(len(kd)):
-            net_rate[i] = kd[i]*np.prod(y**v_ff[:, i]) - ki[i]*np.prod(y**v_bb[:, i])
-        return net_rate  
+        net_rate = kd * np.prod(y ** v_ff.T, axis=1) - ki * np.prod(y ** v_bb.T, axis=1)
+        return net_rate
 
     def differential_pfr(self, time, y, kd, ki):
         """
