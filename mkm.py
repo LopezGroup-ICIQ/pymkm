@@ -850,7 +850,7 @@ class MKM:
                    gas_composition,
                    initial_conditions=None,
                    verbose=0,
-                   jac=False):
+                   jac=True):
         """
         Simulates a single catalytic run at the desired reaction conditions.        
         Args:
@@ -927,6 +927,7 @@ class MKM:
                                                      self.dynamic_cstr,
                                                      temperature,
                                                      *self.ODE_params,
+                                                     end_events=None,
                                                      P_in=y_0[self.NC_sur:])  # scipy output
             final_sr = self.dynamic_cstr(results_sr.t[-1],
                                          results_sr.y[:, -1],
@@ -992,7 +993,7 @@ class MKM:
                                                      self.differential_pfr,
                                                      temperature,
                                                      *self.ODE_params,
-                                                     end_events=self.__steady_state,
+                                                     end_events=None,
                                                      jacobian_matrix=_)
             final_sr = self.differential_pfr(results_sr.t[-1],
                                              results_sr.y[:, -1],
