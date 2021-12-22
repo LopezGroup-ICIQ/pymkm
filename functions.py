@@ -79,3 +79,18 @@ def stoic_backward(matrix):
             if matrix[i][j] > 0:
                 mat[i][j] = matrix[i][j]
     return mat
+
+def net_rate(y, kd, ki, v_matrix):
+        """
+        Returns the net reaction rate for each elementary reaction.
+        Args:
+            y(ndarray): surface coverage + partial pressures array [-/Pa].
+            kd, ki(ndarray): kinetic constants of the direct/reverse steps.
+        Returns:
+            ndarray containing the net reaction rate for all the steps [1/s].
+        """
+        net_rate = np.zeros(len(kd))
+        v_ff = stoic_forward(v_matrix)
+        v_bb = stoic_backward(v_matrix)
+        net_rate = kd * np.prod(y ** v_ff.T, axis=1) - ki * np.prod(y ** v_bb.T, axis=1)
+        return net_rate

@@ -834,7 +834,7 @@ class MKM:
         r = solve_ivp(dy,
                       (0.0, t_final),
                       y_0,
-                      method='BDF',
+                      method='BDF', # BDF for handling stiffness
                       events=end_events,
                       jac=jacobian_matrix,
                       args=args_list,
@@ -920,7 +920,6 @@ class MKM:
         if self.reactor_model == 'dynamic':
             _ = None
             if jac:
-                print("Jacobian in use")
                 _ = self.jac_dyn
             results_sr = self.__ode_solver_solve_ivp(y_0,
                                                      self.dynamic_cstr,
@@ -986,7 +985,6 @@ class MKM:
         else:  # differential PFR
             _ = None
             if jac:
-                print("Jacobian in use")
                 _ = self.jac_diff
             results_sr = self.__ode_solver_solve_ivp(y_0,
                                                      self.differential_pfr,
