@@ -13,14 +13,12 @@ from functions import *
 import graphviz
 from math import pi
 
-
 class MKM:
     """
-    A class to represent microkinetic models for heterogeneous catalytic processes. It provides 
-    functionalities to extract information as reaction rates, steady-state surface coverage, apparent
-    activation energy and reaction orders. Moreover, it provides tools to identify the descriptors
-    of the global processes, like reversibility and degree of rate control analysis.
-
+    A class to represent microkinetic models for heterogeneous catalysis. It provides 
+    functionalities to obtain information as reaction rates, steady-state surface coverage, apparent
+    activation energy and reaction orders. Moreover, it provides tools for identifying the descriptors
+    of the global process, like reversibility and degree of rate control analysis.
     Attributes: 
         name(string): Name of the system under study.
         rm_input_file(string): Path to the .mkm file containing the reaction mechanism.
@@ -31,6 +29,7 @@ class MKM:
                                    "differential": differential PFR, zero conversion model
                                    "dynamic": dynamic CSTR, integral model (finite conversion)
         t_ref(float): Reference temperature at which entropic contributions have been calculated [K].
+        inerts(list): Inert species in the system under study. The list contains the species name as strings.
     """
 
     def __init__(self,
@@ -307,17 +306,6 @@ class MKM:
         self.ODE_params = [1e-12, 1e-70, 1.0E4, 1.0E4]
         self.v_f = stoic_forward(self.v_matrix)
         self.v_b = stoic_backward(self.v_matrix)
-
-        # Controls on passed arguments:
-        control_NR = (self.v_matrix.shape[1] == len(self.g_ts))
-        control_NC_sur = (
-            (self.v_matrix.shape[0]-self.NC_gas) == len(self.species_sur))
-        if not control_NR:
-            print(
-                "No match between number of elementary reactions and provided Gibbs TS in g.mkm")
-        if not control_NC_sur:
-            print("Problem related to the number of surface intermediates!")
-
         r = []
         for i in range(self.NR):
             r.append('R{}'.format(i+1))
@@ -333,7 +321,6 @@ class MKM:
                                               '$\Delta$G_barrier,reverse / eV'])
         self.df_gibbs.index.name = 'reaction'
 #-------------------------------------------------------------------------------------------------------------#
-
     def set_reactor(self, reactor):
         """
         Define the reactor model 
@@ -631,7 +618,7 @@ class MKM:
             print("")
         return None
 
-    def thermodynamic_consistency_analysis(self, temperature):
+    def thermodynamic_consistency(self, temperature):
         """
         This function evaluates the thermodynamic consistency of the microkinetic 
         model based on the provided energetics and reaction mechanism.
@@ -834,7 +821,7 @@ class MKM:
         r = solve_ivp(dy,
                       (0.0, t_final),
                       y_0,
-                      method='BDF', # BDF for handling stiffness
+                      method='BDF', 
                       events=end_events,
                       jac=jacobian_matrix,
                       args=args_list,
@@ -1393,7 +1380,8 @@ class MKM:
         if switch_ts_int == 0:    # Transition state
             if self.g_ts[index] != 0.0:  # Originally activated reaction
                 for i in range(2):
-                    mk_object = MKM('i', self.input_rm,
+                    mk_object = MKM('i', 
+                                    self.input_rm,
                                     self.input_g,
                                     t_ref=self.t_ref,
                                     reactor=self.reactor_model,
@@ -1437,10 +1425,10 @@ class MKM:
                                               S_BET=self.CSTR_sbet,
                                               verbose=1)
                     if mk_object.dg_reaction[index] < 0.0:
-                        mk_object.dg_barrier[index] = dg*i
-                        mk_object.dg_barrier_rev[index] += dg*i
+                        mk_object.dg_barrier[index] = dg * i
+                        mk_object.dg_barrier_rev[index] += dg * i
                     else:
-                        mk_object.dg_barrier[index] = mk_object.dg_reaction[index] + dg*i
+                        mk_object.dg_barrier[index] = mk_object.dg_reaction[index] + dg * i
                     run = mk_object.single_run(temperature,
                                                pressure,
                                                gas_composition,
@@ -1471,7 +1459,7 @@ class MKM:
                                           m_cat=self.CSTR_mcat,
                                           S_BET=self.CSTR_sbet,
                                           verbose=1)
-                mk_object.g_species[index] += dg*(-1)**(i)
+                mk_object.g_species[index] += dg * (-1) ** (i)
                 for j in range(mk_object.NR):
                     mk_object.dg_reaction[j] = np.sum(
                         mk_object.v_matrix[:, j]*np.array(mk_object.g_species))
@@ -1512,7 +1500,6 @@ class MKM:
             drc = (-K_B*temperature) * (np.log(r[0])-np.log(r[1])) / (2*dg)
             dsc = (-K_B*temperature) * (np.log(s[0])-np.log(s[1])) / (2*dg)
         print('DRC = {:0.2f}'.format(drc))
-        #print('DSC = {:0.2f}'.format(dsc))
         return drc, dsc
 
     def calc_drc_t(self,
