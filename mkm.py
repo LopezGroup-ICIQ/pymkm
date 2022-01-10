@@ -417,49 +417,21 @@ class MKM:
     def info(self):
         print(self)
 
-    def __getitem__(self, index):
-        """
-        0 = stoichiometric matrix
-        1 = number of elementary steps (NR)
-        2 = number of intermediates (NC_sur)
-        3 = number of gaseous species (NC_gas)
-        4 = reaction labels (reaction type)
-        5 = intermediates labels (species)
-        6 = gasesous species labels (species_gas)
-        7 = Gibbs energy of surface and gas species [eV]
-        8 = Gibbs energy of transition states [eV]
-        9 = Gibbs energy barrier of direct elementary reaction [eV]
-        10 = Gibbs energy barrier of reverse elementary reaction [eV]
-        11 = Gibbs reaction energy [eV]
-        """
-        info_list = [self.v_matrix, self.NR, self.NC_sur, self.NC_gas, self.reaction_type,
-                     self.species, self.species_gas, self.g_species, self.g_ts, self.dg_barrier,
-                     self.dg_barrier_rev, self.dg_reaction]
-
-        return info_list[index]
-
     @staticmethod
     def methods():
         """Prints all current available MKM methods"""
         functions = ['thermodynamic_consistency_analysis',
                      'single_run',
                      'map_reaction_rate',
-                     'calc_apparent_activation_energy',
-                     'calc_apparent_activation_energy_local',
-                     'calc_apparent_reaction_order',
-                     'calc_degree_of_rate_control',
-                     'calc_drc_t',
-                     'calc_drc_full',
-                     'calc_reversibility']
+                     'apparent_activation_energy',
+                     'apparent_activation_energy_local',
+                     'apparent_reaction_order',
+                     'degree_of_rate_control',
+                     'drc_t',
+                     'drc_full',
+                     'reversibility']
         for method in functions:
             print(method)
-
-    @staticmethod
-    def reactor_models():
-        """ Print available reactor models"""
-        models = ['differential PFR', 'dynamic CSTR']
-        for reactor in models:
-            print(reactor)
 
     def rxn_network(self):
         """Render reaction network with GraphViz."""
@@ -1029,13 +1001,13 @@ class MKM:
                     self.grl[global_reaction_label]]
         return r_matrix
 
-    def calc_apparent_activation_energy(self,
-                                        temp_range,
-                                        pressure,
-                                        gas_composition,
-                                        global_reaction_label,
-                                        initial_conditions=None,
-                                        switch=0):
+    def apparent_activation_energy(self,
+                                   temp_range,
+                                   pressure,
+                                   gas_composition,
+                                   global_reaction_label,
+                                   initial_conditions=None,
+                                   switch=0):
         """
         Function that evaluates the apparent activation energy of the selected global reaction.
         It solves an ODE stiff system for each temperature studied until the steady state convergence.
@@ -1131,14 +1103,14 @@ class MKM:
         plt.show()
         return output_dict
 
-    def calc_apparent_activation_energy_local(self,
-                                              temperature,
-                                              pressure,
-                                              gas_composition,
-                                              global_reaction_label,
-                                              delta_temperature=0.1,
-                                              initial_conditions=None,
-                                              switch=0):
+    def apparent_activation_energy_local(self,
+                                         temperature,
+                                         pressure,
+                                         gas_composition,
+                                         global_reaction_label,
+                                         delta_temperature=0.1,
+                                         initial_conditions=None,
+                                         switch=0):
         """
         Function that evaluates the apparent activation energy of the selected reaction.
         It solves an ODE stiff system for each temperature studied until the steady state convergence.
@@ -1195,14 +1167,14 @@ class MKM:
         output_dict = dict(zip(keys, values))
         return eapp[0]
 
-    def calc_apparent_reaction_order(self,
-                                     temperature,
-                                     pressure,
-                                     composition_matrix,
-                                     species_label,
-                                     global_reaction_label,
-                                     initial_conditions=None,
-                                     switch=0):
+    def apparent_reaction_order(self,
+                                temperature,
+                                pressure,
+                                composition_matrix,
+                                species_label,
+                                global_reaction_label,
+                                initial_conditions=None,
+                                switch=0):
         """
         Args:
             temperature(float): Temperature of the experiment [K]
@@ -1297,15 +1269,15 @@ class MKM:
         plt.show()
         return output_dict
 
-    def calc_degree_of_rate_control(self,
-                                    temperature,
-                                    pressure,
-                                    gas_composition,
-                                    global_reaction_label,
-                                    ts_int_label,
-                                    initial_conditions=None,
-                                    dg=1.0E-6,
-                                    verbose=0):
+    def degree_of_rate_control(self,
+                               temperature,
+                               pressure,
+                               gas_composition,
+                               global_reaction_label,
+                               ts_int_label,
+                               initial_conditions=None,
+                               dg=1.0E-6,
+                               verbose=0):
         """
         Calculates the degree of rate control(DRC) and selectivity control(DSC)
         for the selected transition state or intermediate species.        
@@ -1403,11 +1375,11 @@ class MKM:
                                     reactor=self.reactor_model,
                                     inerts=self.inerts)
                     if mk_object.reactor_model == 'dynamic':
-                        mk_object.CSTR_params(volume=self.CSTR_V,
-                                              Q=self.CSTR_Q,
-                                              m_cat=self.CSTR_mcat,
-                                              S_BET=self.CSTR_sbet,
-                                              verbose=1)
+                        mk_object.set_CSTR_params(volume=self.CSTR_V,
+                                                  Q=self.CSTR_Q,
+                                                  m_cat=self.CSTR_mcat,
+                                                  S_BET=self.CSTR_sbet,
+                                                  verbose=1)
                     if mk_object.dg_reaction[index] < 0.0:
                         mk_object.dg_barrier[index] = dg * i
                         mk_object.dg_barrier_rev[index] += dg * i
@@ -1486,15 +1458,15 @@ class MKM:
         print('DRC = {:0.2f}'.format(drc))
         return drc, dsc
 
-    def calc_drc_t(self,
-                   temp_vector,
-                   pressure,
-                   gas_composition,
-                   global_reaction_label,
-                   ts_int_label,
-                   initial_conditions=None,
-                   dg=1.0E-6,
-                   verbose=1):
+    def drc_t(self,
+              temp_vector,
+              pressure,
+              gas_composition,
+              global_reaction_label,
+              ts_int_label,
+              initial_conditions=None,
+              dg=1.0E-6,
+              verbose=1):
         """
         Calculates the degree of rate control(DRC) and selectivity control(DSC)
         for the selected transition states or intermediate species as function of temperature.        
@@ -1517,14 +1489,14 @@ class MKM:
             dsc_array = np.zeros((len(temp_vector), len(ts_int_label)))
             for i in range(len(temp_vector)):
                 for j in range(len(ts_int_label)):
-                    drc_array[i, j], dsc_array[i, j] = self.calc_degree_of_rate_control(temp_vector[i],
-                                                                                        pressure,
-                                                                                        gas_composition,
-                                                                                        global_reaction_label,
-                                                                                        ts_int_label[j],
-                                                                                        initial_conditions=initial_conditions,
-                                                                                        verbose=verbose,
-                                                                                        dg=dg)
+                    drc_array[i, j], dsc_array[i, j] = self.degree_of_rate_control(temp_vector[i],
+                                                                                   pressure,
+                                                                                   gas_composition,
+                                                                                   global_reaction_label,
+                                                                                   ts_int_label[j],
+                                                                                   initial_conditions=initial_conditions,
+                                                                                   verbose=verbose,
+                                                                                   dg=dg)
             drsc_temp = np.concatenate((np.array([temp_vector]).T,
                                         drc_array, dsc_array), axis=1)
             col = ['T[K]']
@@ -1557,12 +1529,12 @@ class MKM:
             drc_array = np.zeros(len(temp_vector))
             dsc_array = np.zeros(len(temp_vector))
             for i in range(len(temp_vector)):
-                drc_array[i], dsc_array[i] = self.calc_degree_of_rate_control(temp_vector[i],
-                                                                              pressure,
-                                                                              gas_composition,
-                                                                              global_reaction_label,
-                                                                              ts_int_label,
-                                                                              verbose=1)
+                drc_array[i], dsc_array[i] = self.degree_of_rate_control(temp_vector[i],
+                                                                         pressure,
+                                                                         gas_composition,
+                                                                         global_reaction_label,
+                                                                         ts_int_label,
+                                                                         verbose=1)
             drsc_temp = np.concatenate((np.array([temp_vector]).T,
                                         np.array([drc_array]).T,
                                         np.array([dsc_array]).T),
@@ -1585,13 +1557,13 @@ class MKM:
             plt.show()
             return df_drsc_temp
 
-    def calc_drc_full(self,
-                      temperature,
-                      pressure,
-                      gas_composition,
-                      global_reaction_label,
-                      initial_conditions=None,
-                      dg=1.0E-6):
+    def drc_full(self,
+                 temperature,
+                 pressure,
+                 gas_composition,
+                 global_reaction_label,
+                 initial_conditions=None,
+                 dg=1.0E-6):
         """
         Wrapper function that calculates the degree of rate control of all
         intermediates and transition states at the desired conditions.        
@@ -1631,24 +1603,23 @@ class MKM:
         for reaction in range(self.NR):
             print('')
             print('R{}'.format(reaction+1))
-            drc_ts[reaction], dsc_ts[reaction] = self.calc_degree_of_rate_control(temperature,
-                                                                                  pressure,
-                                                                                  gas_composition,
-                                                                                  global_reaction_label,
-                                                                                  'R{}'.format(
-                                                                                      reaction+1),
-                                                                                  verbose=1,
-                                                                                  initial_conditions=initial_conditions)
+            drc_ts[reaction], dsc_ts[reaction] = self.degree_of_rate_control(temperature,
+                                                                             pressure,
+                                                                             gas_composition,
+                                                                             global_reaction_label,
+                                                                             'R{}'.format(reaction+1),
+                                                                             verbose=1,
+                                                                             initial_conditions=initial_conditions)
         for species in range(self.NC_sur):
             print('')
             print('{}'.format(self.species_sur[species]))
-            drc_int[species], dsc_int[species] = self.calc_degree_of_rate_control(temperature,
-                                                                                  pressure,
-                                                                                  gas_composition,
-                                                                                  global_reaction_label,
-                                                                                  self.species_sur[species],
-                                                                                  verbose=1,
-                                                                                  initial_conditions=initial_conditions)
+            drc_int[species], dsc_int[species] = self.degree_of_rate_control(temperature,
+                                                                             pressure,
+                                                                             gas_composition,
+                                                                             global_reaction_label,
+                                                                             self.species_sur[species],
+                                                                             verbose=1,
+                                                                             initial_conditions=initial_conditions)
         r = []
         for i in range(self.NR):
             r.append('R{}'.format(i+1))
@@ -1682,11 +1653,11 @@ class MKM:
         df_drsc_int.format({'DRC': '{:,.2f}'.format, 'DSC': '{:,.2f}'.format})
         return df_drsc_ts, df_drsc_int
 
-    def calc_reversibility(self,
-                           temperature,
-                           pressure,
-                           gas_composition,
-                           initial_conditions=None):
+    def reversibility(self,
+                      temperature,
+                      pressure,
+                      gas_composition,
+                      initial_conditions=None):
         """
         Function that provides the reversibility of all elementary reaction at the desired
         reaction conditions.
