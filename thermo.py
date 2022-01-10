@@ -60,7 +60,6 @@ def enthalpy(species_label, temperature, ref_temperature=298.0):
     h = (hi_rt*R*T - hi_rtref*R*T_ref) + H_ref[species_index]
     return h
 
-
 def entropy(species_label, temperature, ref_temperature=298.0):
     """
     Calculate entropy of the selected species in kJ/mol/K.
@@ -135,7 +134,6 @@ def reaction_enthalpy(reaction_string, temperature, ref_temperature=298.0):
     h_reaction = np.sum(list(h_dict.values())*enthalpy_vector)
     return h_reaction
 
-
 def reaction_entropy(reaction_string, temperature, ref_temperature=298.0):
     """
     Calculate the standard entropy of the selected reaction in kJ/mol/K at the defined T.
@@ -147,7 +145,6 @@ def reaction_entropy(reaction_string, temperature, ref_temperature=298.0):
             list(s_dict.keys())[i], temperature, ref_temperature)
     s_reaction = np.sum(list(s_dict.values())*entropy_vector)
     return s_reaction
-
 
 def reaction_gibbs(reaction_string, temperature, ref_temperature=298.0):
     """
@@ -184,8 +181,15 @@ def reaction_equilibium_constant(reaction_string, temperature, ref_temperature=2
     k_eq = np.exp(-g_reaction / (R * temperature))
     return k_eq
 
-def equilibrium_composition(reaction_string, temperature, pressure, initial_composition, ref_temperature, ref_pressure):
+def equilibrium_composition(*reaction_string,
+                            temperature, 
+                            pressure, 
+                            initial_composition, 
+                            ref_temperature=298.0, 
+                            ref_pressure=1.0):
     """ 
     Calculate the equilibrium composition at thermodynamic equilibrium based on ideal mixture of perfect gases.
-    WORK IN PROGRESS
+    Gas: P_i/P_ref
+    Liquid: x_i * gamma_i
+    Solid: activity = 1
     """

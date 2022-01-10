@@ -584,40 +584,6 @@ class MKM:
         self.scaling_matrix_h = scaling_matrix_h
         self.scaling_matrix_ts = scaling_matrix_ts
 
-    def thermochemistry(self, temperature):
-        """
-        Returns a report about the H, S, G reaction energy at the 
-        selected temperature.        
-        """
-        DHR_model = np.zeros(self.NGR)
-        DSR_model = np.zeros(self.NGR)
-        DGR_model = np.zeros(self.NGR)
-        DHR_database = np.zeros(self.NGR)
-        DSR_database = np.zeros(self.NGR)
-        DGR_database = np.zeros(self.NGR)
-        for i in range(self.NGR):
-            DHR_model[i] = np.sum(
-                self.dh_reaction * self.stoich_numbers[:, i]) * cf
-            DSR_model[i] = np.sum(
-                self.ds_reaction * self.stoich_numbers[:, i]) * cf
-            DGR_model[i] = DHR_model[i] - temperature * DSR_model[i] * cf
-            DHR_database[i] = reaction_enthalpy(self.gr_string[i], temperature)
-            DSR_database[i] = reaction_entropy(self.gr_string[i], temperature)
-            DGR_database[i] = DHR_database[i] - temperature * DSR_database[i]
-        print("{}: Thermochemistry".format(self.name))
-        print("Temperature: {}K".format(temperature))
-        print("")
-        print("---------------------------------------------------------------------")
-        for global_reaction in range(self.NGR):
-            print(self.gr_string[global_reaction])
-            print("Model:    DHR={:0.2e} kJ/mol    DSR={:0.2e} kJ/mol/K     DGR={:0.2e} kJ/mol".format(
-                DHR_model[global_reaction], DSR_model[global_reaction], DGR_model[global_reaction]))
-            print("Database: DHR={:0.2e} kJ/mol    DSR={:0.2e} kJ/mol/K     DGR={:0.2e} kJ/mol".format(
-                DHR_database[global_reaction], DSR_database[global_reaction], DGR_database[global_reaction]))
-            print("---------------------------------------------------------------------")
-            print("")
-        return None
-
     def thermodynamic_consistency(self, temperature):
         """
         This function evaluates the thermodynamic consistency of the microkinetic 
@@ -632,13 +598,25 @@ class MKM:
         """
         k_h = np.exp(-self.dh_reaction/(K_B*temperature))
         k_s = np.exp(self.ds_reaction/K_B)
+        DHR_model = np.zeros(self.NGR)
+        DSR_model = np.zeros(self.NGR)
+        DGR_model = np.zeros(self.NGR)
+        DHR_database = np.zeros(self.NGR)
+        DSR_database = np.zeros(self.NGR)
+        DGR_database = np.zeros(self.NGR)
         keq_H_model = np.zeros(self.NGR)
         keq_S_model = np.zeros(self.NGR)
         keq_model = np.zeros(self.NGR)
         keq_H_database = np.zeros(self.NGR)
         keq_S_database = np.zeros(self.NGR)
-        keq_database = np.zeros(self.NGR)
+        keq_database = np.zeros(self.NGR) 
         for i in range(self.NGR):
+            DHR_model[i] = np.sum(self.dh_reaction * self.stoich_numbers[:, i]) * cf
+            DSR_model[i] = np.sum(self.ds_reaction * self.stoich_numbers[:, i]) * cf
+            DGR_model[i] = DHR_model[i] - temperature * DSR_model[i] * cf
+            DHR_database[i] = reaction_enthalpy(self.gr_string[i], temperature)
+            DSR_database[i] = reaction_entropy(self.gr_string[i], temperature)
+            DGR_database[i] = DHR_database[i] - temperature * DSR_database[i]
             keq_H_model[i] = np.prod(k_h ** self.stoich_numbers[:, i])
             keq_H_database[i] = k_eq_H(self.gr_string[i], temperature)
             keq_S_model[i] = np.prod(k_s ** self.stoich_numbers[:, i])
@@ -651,6 +629,12 @@ class MKM:
         print("----------------------------------------------------------------------------------")
         for global_reaction in range(self.NGR):
             print(self.gr_string[global_reaction])
+            print("")
+            print("Model:    DHR={:0.2e} kJ/mol    DSR={:0.2e} kJ/mol/K     DGR={:0.2e} kJ/mol".format(
+                DHR_model[global_reaction], DSR_model[global_reaction], DGR_model[global_reaction]))
+            print("Database: DHR={:0.2e} kJ/mol    DSR={:0.2e} kJ/mol/K     DGR={:0.2e} kJ/mol".format(
+                DHR_database[global_reaction], DSR_database[global_reaction], DGR_database[global_reaction]))
+            print("")
             print("Model:    keqH={:0.2e}    keqS={:0.2e}    Keq={:0.2e}".format(
                 keq_H_model[global_reaction], keq_S_model[global_reaction], keq_model[global_reaction]))
             print("Database: keqH={:0.2e}    keqS={:0.2e}    Keq={:0.2e}".format(

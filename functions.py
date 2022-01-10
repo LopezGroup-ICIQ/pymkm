@@ -14,19 +14,16 @@ def z_calc(y, kdir, krev, v_f, v_b):
     rd = np.zeros(len(kdir))
     ri = np.zeros(len(krev))
     for reaction in range(len(rd)):
-        # Forward reaction rate
         rd[reaction] = kdir[reaction] * np.prod(y ** v_f[:, reaction])
-        # Backward reaction rate
         ri[reaction] = krev[reaction] * np.prod(y ** v_b[:, reaction])
-    return ri/rd
+    return ri / rd
 
 def calc_eapp(temperature_vector, reaction_rate_vector):
     """
-    Function that calculates the apparent activation energy of a global reaction.
-    A linear regression is performed to extract the output.
+    Function that evaluates the apparent activation energy of a global reaction.
     Args:
-        temperature_vector(nparray): Array containing the studied temperature range in Kelvin
-        reaction_rate_vector(nparray): Array containing the reaction rate at different temperatures            
+        temperature_vector(ndarray): Array containing the studied temperature range in Kelvin
+        reaction_rate_vector(ndarray): Array containing the reaction rate at different temperatures            
     Returns:
         Apparent reaction energy in kJ/mol in the temperature range of interest.      
     """
@@ -39,20 +36,22 @@ def calc_eapp(temperature_vector, reaction_rate_vector):
     return Eapp, R2
 
 def calc_reac_order(partial_pressure, reaction_rate):
-        """
-        Args:
-            partial_pressure(nparray): Partial pressure of the gas species [Pa]
-            reaction_rate(nparray): Reaction rate [1/s]            
-        Returns:
-            Apparent reaction order with respect to the selected species
-        """
-        lm = LinearRegression()
-        x = pd.DataFrame(np.log(partial_pressure))
-        y = pd.DataFrame(np.log(reaction_rate))
-        reg = lm.fit(x, y)
-        napp = reg.coef_[0, 0]
-        R2 = reg.score(x, y)
-        return napp, R2
+    """
+    Function that evaluates the apparent reaction order for a specific
+    gas species for the selected global reaction.
+    Args:
+        partial_pressure(ndarray): Partial pressure of the gas species [Pa]
+        reaction_rate(ndarray): Reaction rate [1/s]            
+    Returns:
+        Apparent reaction order with respect to the selected species
+    """
+    lm = LinearRegression()
+    x = pd.DataFrame(np.log(partial_pressure))
+    y = pd.DataFrame(np.log(reaction_rate))
+    reg = lm.fit(x, y)
+    napp = reg.coef_[0, 0]
+    R2 = reg.score(x, y)
+    return napp, R2
 
 def stoic_forward(matrix):
     """
@@ -81,16 +80,16 @@ def stoic_backward(matrix):
     return mat
 
 def net_rate(y, kd, ki, v_matrix):
-        """
-        Returns the net reaction rate for each elementary reaction.
-        Args:
-            y(ndarray): surface coverage + partial pressures array [-/Pa].
-            kd, ki(ndarray): kinetic constants of the direct/reverse steps.
-        Returns:
-            ndarray containing the net reaction rate for all the steps [1/s].
-        """
-        net_rate = np.zeros(len(kd))
-        v_ff = stoic_forward(v_matrix)
-        v_bb = stoic_backward(v_matrix)
-        net_rate = kd * np.prod(y ** v_ff.T, axis=1) - ki * np.prod(y ** v_bb.T, axis=1)
-        return net_rate
+    """
+    Returns the net reaction rate for each elementary reaction.
+    Args:
+        y(ndarray): surface coverage + partial pressures array [-/Pa].
+        kd, ki(ndarray): kinetic constants of the direct/reverse steps.
+    Returns:
+        ndarray containing the net reaction rate for all the steps [1/s].
+    """
+    net_rate = np.zeros(len(kd))
+    v_ff = stoic_forward(v_matrix)
+    v_bb = stoic_backward(v_matrix)
+    net_rate = kd * np.prod(y ** v_ff.T, axis=1) - ki * np.prod(y ** v_bb.T, axis=1)
+    return net_rate
