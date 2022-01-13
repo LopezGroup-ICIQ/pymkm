@@ -769,7 +769,7 @@ class MKM:
         """
         Helper function
         """
-        kd, ki = self.kincos_calc(temperature)
+        kd, ki = self.kinetic_coeff(temperature)
         if self.reactor_model == 'dynamic':
             args_list = [kd, ki, P_in, temperature]
         else:
@@ -786,7 +786,7 @@ class MKM:
                       max_step=dt_max)
         return r
 
-    def single_run(self,
+    def kinetic_run(self,
                    temperature,
                    pressure,
                    gas_composition,
@@ -904,7 +904,7 @@ class MKM:
                           (P_out[x] - P_in[x]) / (R * temperature))  # [mol/s]
             s_target_sr = RR[0] / np.sum(RR)
             r_sr = self.net_rate(
-                results_sr.y[:, -1], *self.kincos_calc(temperature))
+                results_sr.y[:, -1], *self.kinetic_coeff(temperature))
             value_masi = max(yfin_sr[:self.NC_sur-1])
             key_masi = self.species_sur[np.argmax(yfin_sr[:self.NC_sur-1])]
             masi_sr = {key_masi: value_masi*100.0}
@@ -940,7 +940,7 @@ class MKM:
                                              *self.kinetic_coeff(temperature))
             yfin_sr = results_sr.y[:self.NC_sur, -1]
             r_sr = self.net_rate(
-                results_sr.y[:, -1], *self.kincos_calc(temperature))
+                results_sr.y[:, -1], *self.kinetic_coeff(temperature))
             bp = list(set(self.by_products))
             s_target_sr = r_sr[self.target] / \
                 (r_sr[self.target] + r_sr[bp].sum())
@@ -992,7 +992,7 @@ class MKM:
         r_matrix = np.zeros((len(temp_vector), len(p_vector)))
         for i in range(len(temp_vector)):
             for j in range(len(p_vector)):
-                run = self.single_run(temp_vector[i],
+                run = self.kinetic_run(temp_vector[i],
                                       p_vector[j],
                                       composition,
                                       initial_conditions=initial_conditions,
@@ -1051,7 +1051,7 @@ class MKM:
                         )     # production rate [1/s]
         for i in range(len(temperature_vector)):
             t0 = time.time()
-            run = self.single_run(temperature_vector[i],
+            run = self.kinetic_run(temperature_vector[i],
                                   pressure,
                                   gas_composition,
                                   initial_conditions=initial_conditions,
@@ -1152,7 +1152,7 @@ class MKM:
         r_ea = np.zeros((len(temperature_vector), 1))
         for i in range(len(temperature_vector)):
             t0 = time.time()
-            run = self.single_run(temperature_vector[i],
+            run = self.kinetic_run(temperature_vector[i],
                                   pressure,
                                   gas_composition,
                                   initial_conditions=initial_conditions,
@@ -1214,7 +1214,7 @@ class MKM:
         print('')
         for i in range(n_runs):
             t0 = time.time()
-            run = self.single_run(temperature,
+            run = self.kinetic_run(temperature,
                                   pressure,
                                   composition_matrix[i, :],
                                   initial_conditions=initial_conditions,
@@ -1350,7 +1350,7 @@ class MKM:
                                               verbose=1)
                     mk_object.dg_barrier[index] += dg*(-1)**(i)
                     mk_object.dg_barrier_rev[index] += dg*(-1)**(i)
-                    run = mk_object.single_run(temperature,
+                    run = mk_object.kinetic_run(temperature,
                                                pressure,
                                                gas_composition,
                                                initial_conditions=initial_conditions,
@@ -1385,7 +1385,7 @@ class MKM:
                         mk_object.dg_barrier_rev[index] += dg * i
                     else:
                         mk_object.dg_barrier[index] = mk_object.dg_reaction[index] + dg * i
-                    run = mk_object.single_run(temperature,
+                    run = mk_object.kinetic_run(temperature,
                                                pressure,
                                                gas_composition,
                                                initial_conditions=initial_conditions,
@@ -1410,7 +1410,7 @@ class MKM:
                                 reactor=self.reactor_model,
                                 inerts=self.inerts)
                 if mk_object.reactor_model == 'dynamic':
-                    mk_object.CSTR_params(volume=self.CSTR_V,
+                    mk_object.set_CSTR_params(volume=self.CSTR_V,
                                           Q=self.CSTR_Q,
                                           m_cat=self.CSTR_mcat,
                                           S_BET=self.CSTR_sbet,
@@ -1439,7 +1439,7 @@ class MKM:
                         else:
                             mk_object.dg_barrier[j] = mk_object.dg_reaction[j]
                             mk_object.dg_barrier_rev[j] = 0.0
-                run = mk_object.single_run(temperature,
+                run = mk_object.kinetic_run(temperature,
                                            pressure,
                                            gas_composition,
                                            initial_conditions=initial_conditions,
@@ -1682,12 +1682,12 @@ class MKM:
         for i in str_list:
             gas_string = gas_string + i
         print(gas_string)
-        run = self.single_run(temperature,
+        run = self.kinetic_run(temperature,
                               pressure,
                               gas_composition,
                               initial_conditions=initial_conditions,
                               verbose=1)
-        k = self.kincos_calc(temperature)
+        k = self.kinetic_coeff(temperature)
         composition_ss = list(run['theta'].values())
         for i in range(self.NC_gas):
             composition_ss.append(pressure*gas_composition[i])
