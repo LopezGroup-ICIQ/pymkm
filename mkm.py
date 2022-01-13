@@ -527,8 +527,8 @@ class MKM:
         Args:
             descriptor_name(str): name of the descriptor (ads. energy of specific species)
             descriptor_value(float): value of the descriptor in eV.
-            scaling_matrix_h(nparray): array with dimension (NC_sur-1)*2.
-            scaling_matrix_ts(nparray): array with dimension NR*2.
+            scaling_matrix_h(ndarray): array with dimension (NC_sur-1)*2.
+            scaling_matrix_ts(ndarray): array with dimension NR*2.
         """
         q = scaling_matrix_h[:, 0]
         m = scaling_matrix_h[:, 1]
@@ -616,9 +616,9 @@ class MKM:
             print("")
         return None
 
-    def kincos_calc(self, temperature, area_active_site=1e-19):
+    def kinetic_coeff(self, temperature, area_active_site=1e-19):
         """
-        Returns the kinetic constants for the direct and reverse reactions, according to 
+        Returns the kinetic coefficient for the direct and reverse reactions, according to 
         the reaction type (adsorption, desorption or surface reaction) and TST.                
         Args: 
             temperature(float): Temperature in [K].
@@ -872,7 +872,7 @@ class MKM:
                                                      P_in=y_0[self.NC_sur:])  # scipy output
             final_sr = self.dynamic_cstr(results_sr.t[-1],
                                          results_sr.y[:, -1],
-                                         *self.kincos_calc(temperature),
+                                         *self.kinetic_coeff(temperature),
                                          y_0[self.NC_sur:],
                                          temperature)  # dydt
             yfin_sr = results_sr.y[:self.NC_tot, -1]  # y
@@ -937,7 +937,7 @@ class MKM:
                                                      jacobian_matrix=_)
             final_sr = self.differential_pfr(results_sr.t[-1],
                                              results_sr.y[:, -1],
-                                             *self.kincos_calc(temperature))
+                                             *self.kinetic_coeff(temperature))
             yfin_sr = results_sr.y[:self.NC_sur, -1]
             r_sr = self.net_rate(
                 results_sr.y[:, -1], *self.kincos_calc(temperature))
@@ -1343,7 +1343,7 @@ class MKM:
                                     reactor=self.reactor_model,
                                     inerts=self.inerts)
                     if mk_object.reactor_model == 'dynamic':
-                        mk_object.CSTR_params(volume=self.CSTR_V,
+                        mk_object.set_CSTR_params(volume=self.CSTR_V,
                                               Q=self.CSTR_Q,
                                               m_cat=self.CSTR_mcat,
                                               S_BET=self.CSTR_sbet,

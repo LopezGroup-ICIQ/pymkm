@@ -1,4 +1,6 @@
-"module containing functions used to compute the thermodynamic state functions (H, S, G, Keq)starting from the NASA 7-polynomial coefficients from the \" third millenium idealgas and condensed phase thermochemical database for combustion(E. Goos, A. Burcat, B. Ruscic)"
+"""Thermodynamic module of Pymkm. It contains functions used to compute the thermodynamic state functions 
+(H, S, G, Keq) starting from the NASA 7-polynomial coefficients from the \" third millenium ideal gas and 
+condensed phase thermochemical database for combustion(E. Goos, A. Burcat, B. Ruscic)"""
 
 import numpy as np
 
@@ -41,15 +43,15 @@ a7 = np.array([9.90105222E0, 6.83010238E-1,
 
 a_matrix = np.array([a1, a2, a3, a4, a5, a6, a7]).T
 
-def enthalpy(species_label, temperature, ref_temperature=298.0):
+def enthalpy(species_label, temperature, ref_temperature=T_ref):
     """
-    Calculate enthalpy of the selected species based on NASA polynomials.
+    Calculates the enthalpy of the selected species.
     Args:
-        species_label(str): string of the selected species.
+        species_label(str): species (e.g., 'CO2').
         temperature(float): in Kelvin [K].
-        ref_temperature(float): default to 298.0 K.
+        ref_temperature(float): default to 298 K.
     Returns:
-        Enthalpy in [kJ/mol] at the defined temperature.
+        h(float): Enthalpy at the defined temperature [kJ/mol].
     """
     species_index = species.index(species_label)
     a = a_matrix[species_index, :]
@@ -60,9 +62,15 @@ def enthalpy(species_label, temperature, ref_temperature=298.0):
     h = (hi_rt*R*T - hi_rtref*R*T_ref) + H_ref[species_index]
     return h
 
-def entropy(species_label, temperature, ref_temperature=298.0):
+def entropy(species_label, temperature, ref_temperature=T_ref):
     """
-    Calculate entropy of the selected species in kJ/mol/K.
+    Calculates the entropy of the selected species.
+    Args:
+        species_label(str): species (e.g., 'CO2').
+        temperature(float): in Kelvin [K].
+        ref_temperature(float): default to 298 K.
+    Returns:
+        s(float): Entropy at the defined temperature [kJ/mol/K].
     """
     species_index = species.index(species_label)
     a = a_matrix[species_index, :]
@@ -73,9 +81,15 @@ def entropy(species_label, temperature, ref_temperature=298.0):
     s = (si_rt*R - si_rtref*R) + S_ref[species_index]/1000.0
     return s
 
-def gibbs(species_label, temperature, ref_temperature=298.0):
+def gibbs(species_label, temperature, ref_temperature=T_ref):
     """
-    Calculate Gibbs free energy of the selected species in kJ/mol.
+    Calculates the Gibbs free energy of the selected species.
+    Args:
+        species_label(str): species (e.g., 'CO2').
+        temperature(float): in Kelvin [K].
+        ref_temperature(float): default to 298 K.
+    Returns:
+        g(float): Gibbs free energy at the defined temperature [kJ/mol].
     """
     species_index = species.index(species_label)
     h = enthalpy(species_label, temperature, ref_temperature)
@@ -85,7 +99,12 @@ def gibbs(species_label, temperature, ref_temperature=298.0):
 
 def reaction_string_dict_converter(reaction_string):
     """
-    Converts a reaction string to a specific dictionary.
+    Converts a reaction string to a Python dictionary representation of the reaction.
+    Args:
+        reaction_string(string): ex. 'CO2 + H2 -> CO + H2O'
+    Returns:
+        reaction_dict(dict): Dictionary assigning to each species its stoichiometric
+                             coefficient in the reaction.
     """
     species = []
     reaction_list = reaction_string.split()
@@ -122,9 +141,15 @@ def reaction_string_dict_converter(reaction_string):
     reaction_dict = dict(zip(species,stoichiometric_coeff))
     return reaction_dict
 
-def reaction_enthalpy(reaction_string, temperature, ref_temperature=298.0):
+def reaction_enthalpy(reaction_string, temperature, ref_temperature=T_ref):
     """
-    Calculate the standard enthalpy of the selected reaction in kJ/mol at the defined T.
+    Calculates the enthalpy of the input reaction.
+    Args:
+        reaction_string(str): string of the reaction (e.g., 'CO2 + H2 -> CO + H2O')
+        temperature(float): temperature in [K]
+        ref_temperature(float): Default to 298 [K].
+    Returns:
+        h_reaction(float): Reaction enthalpy [kJ/mol].
     """
     h_dict = reaction_string_dict_converter(reaction_string)
     enthalpy_vector = np.zeros(len(h_dict))
@@ -134,9 +159,15 @@ def reaction_enthalpy(reaction_string, temperature, ref_temperature=298.0):
     h_reaction = np.sum(list(h_dict.values())*enthalpy_vector)
     return h_reaction
 
-def reaction_entropy(reaction_string, temperature, ref_temperature=298.0):
+def reaction_entropy(reaction_string, temperature, ref_temperature=T_ref):
     """
-    Calculate the standard entropy of the selected reaction in kJ/mol/K at the defined T.
+    Calculates the entropy of the input reaction.
+    Args:
+        reaction_string(str): string of the reaction (e.g., 'CO2 + H2 -> CO + H2O')
+        temperature(float): temperature in [K]
+        ref_temperature(float): Default to 298 [K].
+    Returns:
+        s_reaction(float): Reaction entropy [kJ/mol/K].
     """
     s_dict = reaction_string_dict_converter(reaction_string)
     entropy_vector = np.zeros(len(s_dict))
@@ -146,9 +177,15 @@ def reaction_entropy(reaction_string, temperature, ref_temperature=298.0):
     s_reaction = np.sum(list(s_dict.values())*entropy_vector)
     return s_reaction
 
-def reaction_gibbs(reaction_string, temperature, ref_temperature=298.0):
+def reaction_gibbs(reaction_string, temperature, ref_temperature=T_ref):
     """
-    Calculate the standard Gibbs free energy of the selected reaction in kJ/mol at the defined T.
+    Calculates the Gibbs free energy of the input reaction.
+    Args:
+        reaction_string(str): string of the reaction (e.g., 'CO2 + H2 -> CO + H2O')
+        temperature(float): temperature in [K]
+        ref_temperature(float): Default to 298 [K].
+    Returns:
+        g_reaction(float): Reaction Gibbs free energy [kJ/mol].
     """
     h_reaction = reaction_enthalpy(
         reaction_string, temperature, ref_temperature)
@@ -157,25 +194,43 @@ def reaction_gibbs(reaction_string, temperature, ref_temperature=298.0):
     g_reaction = h_reaction - temperature*s_reaction
     return g_reaction
 
-def k_eq_H(reaction_string, temperature, ref_temperature=298.0):
+def k_eq_H(reaction_string, temperature, ref_temperature=T_ref):
     """
-    Calculate the enthalpy equilibrium constant of the selected reaction.
+    Calculates the enthalpy equilibrium constant of the input reaction.
+    Args:
+        reaction_string(str): string of the reaction (e.g., 'CO2 + H2 -> CO + H2O')
+        temperature(float): temperature in [K]
+        ref_temperature(float): Default to 298 [K].
+    Returns:
+        k_eq(float): Enthalpy equilibrium constant [-].
     """
     h_reaction = reaction_enthalpy(reaction_string, temperature, ref_temperature)
     k_eq = np.exp(-h_reaction / (R * temperature))
     return k_eq
 
-def k_eq_S(reaction_string, temperature, ref_temperature=298.0):
+def k_eq_S(reaction_string, temperature, ref_temperature=T_ref):
     """
-    Calculate the entropy equilibrium constant of the selected reaction.
+    Calculate the entropy equilibrium constant of the input reaction.
+    Args:
+        reaction_string(str): string of the reaction (e.g., 'CO2 + H2 -> CO + H2O')
+        temperature(float): temperature in [K]
+        ref_temperature(float): Default to 298 [K].
+    Returns:
+        k_eq(float): Entropy equilibrium constant [-].
     """
     s_reaction = reaction_entropy(reaction_string, temperature, ref_temperature)
     k_eq = np.exp(s_reaction / R)
     return k_eq
 
-def reaction_equilibium_constant(reaction_string, temperature, ref_temperature=298.0):
+def reaction_equilibium_constant(reaction_string, temperature, ref_temperature=T_ref):
     """
-    Calculate the equilibrium constant of the selected reaction.
+    Calculate the thermodynamic equilibrium constant of the input reaction.
+    Args:
+        reaction_string(str): string of the reaction (e.g., 'CO2 + H2 -> CO + H2O')
+        temperature(float): temperature in [K]
+        ref_temperature(float): Default to 298 [K].
+    Returns:
+        k_eq(float): Equilibrium constant [-].
     """
     g_reaction = reaction_gibbs(reaction_string, temperature, ref_temperature)
     k_eq = np.exp(-g_reaction / (R * temperature))
@@ -185,8 +240,8 @@ def equilibrium_composition(*reaction_string,
                             temperature, 
                             pressure, 
                             initial_composition, 
-                            ref_temperature=298.0, 
-                            ref_pressure=1.0):
+                            ref_temperature=T_ref, 
+                            ref_pressure=P_ref):
     """ 
     Calculate the equilibrium composition at thermodynamic equilibrium based on ideal mixture of perfect gases.
     Gas: P_i/P_ref
