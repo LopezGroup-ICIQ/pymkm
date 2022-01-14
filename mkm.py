@@ -303,7 +303,7 @@ class MKM:
                     self.dg_barrier[i] = self.dg_reaction[i]
                     self.dg_barrier_rev[i] = 0.0
 
-        self.ODE_params = [1e-12, 1e-70, 1.0E4, 1.0E4]
+        self.ODE_params = [1e-12, 1e-70, 1.0E5]
         self.v_f = stoic_forward(self.v_matrix)
         self.v_b = stoic_backward(self.v_matrix)
         r = []
@@ -763,7 +763,7 @@ class MKM:
     __steady_state.terminal = True
 
     def __ode_solver_solve_ivp(self, y_0, dy, temperature,
-                               reltol, abstol, t_final, dt_max,
+                               reltol, abstol, t_final,
                                end_events=None, jacobian_matrix=None,
                                P_in=None):
         """
@@ -782,8 +782,7 @@ class MKM:
                       jac=jacobian_matrix,
                       args=args_list,
                       atol=abstol,
-                      rtol=reltol,
-                      max_step=dt_max)
+                      rtol=reltol)
         return r
 
     def kinetic_run(self,
