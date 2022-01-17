@@ -193,21 +193,29 @@ class MKM:
         ###########################################################################
         e = open('./{}'.format(g_input_file), 'r')
         lines = e.readlines()
-        for i in range(len(lines)):
-            lines[i] = lines[i].strip('\n')
+        for i in range(len(lines)): # List comprehension seems not to work here XD
+            lines[i] = lines[i].strip("\n")
         E_ts = lines[:self.NR]
         E_species = [i for i in lines[self.NR+3:] if i != ""]
         H_ts = np.zeros(self.NR)
         H_species = np.zeros(self.NC_tot)
         S_ts = np.zeros(self.NR)
         S_species = np.zeros(self.NC_tot)
+        keys_R = []
+        keys_species = []
+        for j in range(len(E_ts)):
+            keys_R.append(E_ts[j].split()[0])
+        for j in range(len(E_species)):
+            keys_species.append(E_species[j].split()[0].strip(':'))
         for i in range(self.NR):
-            H_ts[i] = float(E_ts[i].split()[0])
-            S_ts[i] = float(E_ts[i].split()[-1]) / t_ref
+            index = keys_R.index('R{}:'.format(i+1))
+            H_ts[i] = float(E_ts[index].split()[1])
+            S_ts[i] = float(E_ts[index].split()[-1]) / t_ref
         for i in range(self.NC_tot):
             if self.species_tot[i].strip('(g)') not in inerts:
-                H_species[i] = float(E_species[i].split()[0])
-                S_species[i] = float(E_species[i].split()[-1]) / t_ref
+                index = keys_species.index(self.species_tot[i])
+                H_species[i] = float(E_species[index].split()[1])
+                S_species[i] = float(E_species[index].split()[-1]) / t_ref
             else:
                 H_species[i] = 0.0
                 S_species[i] = 0.0
@@ -421,7 +429,7 @@ class MKM:
     def methods():
         """Prints all current available MKM methods"""
         functions = ['thermodynamic_consistency_analysis',
-                     'single_run',
+                     'kinetic_run',
                      'map_reaction_rate',
                      'apparent_activation_energy',
                      'apparent_activation_energy_local',
