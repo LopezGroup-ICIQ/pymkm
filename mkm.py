@@ -1,5 +1,5 @@
 """
-Microkinetic modeling class developed by Santiago Morandi and Albert Sabadell-Rendon at ICIQ (Spain).
+MKM class for heterogeneous catalysis.
 """
 import time
 import numpy as np
@@ -53,7 +53,6 @@ class MKM:
         # - Species (gas and surface)
         # - Reaction types
         ############################################################################
-
         rm = open(rm_input_file, "r")
         lines = rm.readlines()
         self.NGR = lines.index('\n')
@@ -186,20 +185,20 @@ class MKM:
                     if self.v_matrix[self.NC_sur+j, i] == 0:
                         pass
                     else:
-                        self.m[i] = self.masses[j]/(N_AV*1000)
+                        self.m[i] = self.masses[j] / (N_AV*1000)
         ###########################################################################
         # g.mkm parsing
         # - System energetics (H, S and G)
         ###########################################################################
         e = open('./{}'.format(g_input_file), 'r')
         lines = e.readlines()
-        for i in range(len(lines)): # List comprehension seems not to work here XD
+        for i in range(len(lines)): 
             lines[i] = lines[i].strip("\n")
         E_ts = lines[:self.NR]
         E_species = [i for i in lines[self.NR+3:] if i != ""]
         H_ts = np.zeros(self.NR)
+        S_ts = np.zeros(self.NR) 
         H_species = np.zeros(self.NC_tot)
-        S_ts = np.zeros(self.NR)
         S_species = np.zeros(self.NC_tot)
         keys_R = []
         keys_species = []
@@ -311,7 +310,7 @@ class MKM:
                     self.dg_barrier[i] = self.dg_reaction[i]
                     self.dg_barrier_rev[i] = 0.0
 
-        self.ODE_params = [1e-12, 1e-70, 1.0E5]
+        self.ODE_params = [1e-12, 1e-70, 1.0]
         self.v_f = stoic_forward(self.v_matrix)
         self.v_b = stoic_backward(self.v_matrix)
         r = []
@@ -324,9 +323,9 @@ class MKM:
                                                self.dg_barrier,
                                                self.dg_barrier_rev]).T,
                                      index=[r, reaction_type_list],
-                                     columns=['$\Delta$G_reaction / eV',
-                                              '$\Delta$G_barrier / eV',
-                                              '$\Delta$G_barrier,reverse / eV'])
+                                     columns=['DGR / eV',
+                                              'DG barrier / eV',
+                                              'DG reverse barrier / eV'])
         self.df_gibbs.index.name = 'reaction'
 #-------------------------------------------------------------------------------------------------------------#
     def set_reactor(self, reactor):
@@ -350,7 +349,8 @@ class MKM:
                         A_site=1.0E-19,
                         verbose=0):
         """ 
-        Method for defining the Dynamic CSTR settings.
+        Method for defining the parameters of the 
+        Dynamic CSTR reactor.
         Args:
             radius(float): Reactor inner radius in [m]
             length(float): reactor length in [m]
@@ -359,7 +359,6 @@ class MKM:
             S_BET(float): BET surface in [m2/kg_cat]
             A_site(float): Area of the active site in [m2]. Default to 1.0E-19
         """
-
         self.CSTR_V = (pi * radius ** 2) * length
         self.CSTR_Q = Q
         self.CSTR_tau = self.CSTR_V / self.CSTR_Q  # Residence time [s]
