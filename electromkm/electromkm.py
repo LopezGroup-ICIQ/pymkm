@@ -347,9 +347,9 @@ class electroMKM:
         the reaction type (adsorption, desorption or surface reaction) and TST.
         Revisited from pymkm for electrocatalysis.                
         Args: 
-            overpotential(float): applied overpotential [V]
+            overpotential(float): applied overpotential [V].
             temperature(float): absolute temperature [K].
-            A_site_0(float): Area of the catalytic ensemble [m2]. Default: 1e-19[m2]
+            A_site_0(float): Area of the catalytic ensemble [m2]. Default: 1e-19[m2].
         Returns:
             (list): list with 2 ndarrays for direct and reverse kinetic coefficients.
         """
@@ -373,12 +373,12 @@ class electroMKM:
                     np.exp(-self.dg_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
             else: # Charge transfer reaction
-                f = F / R / temperature  # C/J
+                f = F / (R * temperature)  # C/J
                 index = self.species_tot.index('H(e)')
-                if self.v_matrix[index, reaction] < 0.0: # Reduction (e- in the lhs of the reaction)
+                if self.v_matrix[index, reaction] < 0: # Reduction (e- in the lhs of the reaction)
                     kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
                     kd[reaction] *= np.exp(- self.alfa[reaction] * f * overpotential)
-                    Keq[reaction] *= np.exp(-self.alfa[reaction] * f * overpotential)
+                    Keq[reaction] *= np.exp(-f * overpotential)
                     kr[reaction] = kd[reaction] / Keq[reaction]
                 else: # Oxidation (e- in the rhs of the reaction)
                     kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
@@ -404,7 +404,7 @@ class electroMKM:
 
     def differential_pfr(self, time, y, kd, ki):
         """
-        Returns the rhs of the ODE system.
+        Returns the rhs of the ODE system for solve_ivp.
         Reactor model: differential PFR (zero conversion)
         """
         # Surface species
@@ -419,8 +419,7 @@ class electroMKM:
     def jac_diff(self, time, y, kd, ki):
         """
         Returns Jacobian matrix of the system for
-        the differential reactor model. 
-        NOT SUITABLE NOW.
+        the differential reactor model.
         """
         J = np.zeros((len(y), len(y)))
         Jg = np.zeros((len(kd), len(y)))
@@ -446,7 +445,9 @@ class electroMKM:
                     Jh[r, s] = 2 * ki[r] * np.prod(y ** v_b[:, r])
                     v_b[s, r] += 1
         J = self.v_matrix @ (Jg - Jh)
-        J[self.NC_sur:, :] = 0.0
+        J[self.NC_sur:, :] = 0
+        index = self.species_tot.index('H(e)')
+        J[index,:] = 0
         return J
 
     def __ode_solver_solve_ivp(self,
@@ -484,9 +485,9 @@ class electroMKM:
                     temperature=298.0,
                     pressure=1e5,
                     verbose=0,
-                    jac=False):
+                    jac=True):
         """
-        Simulates a single catalytic run at the desired reaction conditions.        
+        Simulates a steady-state catalytic run at the desired reaction conditions.        
         Args:
             overpotential(float): applied overpotential [V].
             pH(float): pH of the electrolyte solution [-].
@@ -509,7 +510,8 @@ class electroMKM:
             y_0[indexH] = 10 ** (-pH)
         else:
             y_0[:self.NC_sur] = initial_conditions[:self.NC_sur]
-        y_0[self.NC_sur:] = 0.0
+        y_0[self.NC_sur:] = 0.0 # We need to address this.
+        #-----------------------------------------------------------------------------------------------
         if temperature < 0.0:
             raise ValueError('Wrong temperature (T > 0 K)')
         if pressure < 0.0:
@@ -537,7 +539,7 @@ class electroMKM:
         r = ['R{}'.format(i+1) for i in range(self.NR)]
         values = [temperature, pressure / 1e5]
         _ = None
-        if jac:
+        if jac: 
             _ = self.jac_diff
         results_sr = self.__ode_solver_solve_ivp(y_0,
                                                  self.differential_pfr,
@@ -554,7 +556,7 @@ class electroMKM:
         r_sr = self.net_rate(results_sr.y[:, -1],
                             *self.kinetic_coeff(overpotential,
                                                 temperature))
-        j_sr = r_sr * F / (N_AV * 1.0E-19)
+        j_sr = -r_sr * F / (N_AV * 1.0E-19)
         bp = list(set(self.by_products))
         s_target_sr = r_sr[self.target] / (r_sr[self.target] + r_sr[bp].sum())
         value_masi = max(yfin_sr[:self.NC_sur-1])
@@ -574,7 +576,7 @@ class electroMKM:
         output_dict = dict(zip(keys, values))
         if verbose == 0:
             print('')
-            print('{} Current density: {:0.2e} mA/ cm2'.format(self.target_label,
+            print('{} Current density: {:0.2e} mA cm-2'.format(self.target_label,
                                                                j_sr[self.target]/10))
             print('{} Selectivity: {:.2f}%'.format(self.target_label,
                                                    s_target_sr*100.0))
