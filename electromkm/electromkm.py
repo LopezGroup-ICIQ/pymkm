@@ -496,7 +496,7 @@ class electroMKM:
             initial_conditions(nparray): initial coverage of the catalyst surface [-].
             verbose(int): 0=print all output; 1=print nothing.        
         Returns:
-            Dictionary containing a full report of the electrocatalytic simulation.        
+            (dict): Full report of the electrocatalytic simulation.        
         """
         if verbose == 0:
             print('{}: Microkinetic run'.format(self.name))
@@ -527,7 +527,6 @@ class electroMKM:
         t0 = time.time()
         keys = ['T',
                 'P',
-                'y_in',
                 'theta',
                 'ddt',
                 'r',
@@ -583,4 +582,38 @@ class electroMKM:
             print('Most Abundant Surface Intermediate: {} Coverage: {:.2f}% '.format(
                 key_masi, value_masi*100.0))
             print('CPU time: {:.2f} s'.format(time.time() - t0))
-        return output_dict    
+        return output_dict
+
+    def j_U(self,
+            reaction_label,
+            overpotential_vector,
+            pH,
+            initial_conditions=None,
+            temperature=298.0,
+            pressure=1e5,
+            verbose=0,
+            jac=False):
+        exp = []
+        j_vector = np.zeros(len(overpotential_vector))
+        if reaction_label not in self.grl.keys():
+            raise ValueError("Unexisting reaction label")
+        for i in range(len(overpotential_vector)):
+            exp.append(self.kinetic_run(overpotential_vector[i],
+                                           pH,
+                                           initial_conditions=initial_conditions,
+                                           temperature=temperature,
+                                           pressure=pressure,
+                                           verbose=verbose,
+                                           jac=jac))
+            j_vector[i] = exp[i]['j_{}'.format(reaction_label)]
+            print("U = {} V vs SHE    j = {}".format(overpotential_vector[i],j_vector[i]))
+        # NB in the books: ln with e as base, log with base 10
+        #    Numpy: log is ln, log10 is log
+        plt.plot(overpotential_vector, np.log10(abs(j_vector)))
+        plt.title("{}: Tafel plot".format(self.name))
+        plt.xlabel("Overpotential / V vs SHE")
+        plt.ylabel("log10(|j|)")
+        plt.grid()
+        plt.show()            
+        return j_vector
+        
