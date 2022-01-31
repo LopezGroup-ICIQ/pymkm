@@ -1,0 +1,22 @@
+MetBr 12: CH2Br2 + H2 -> CH3Br + HBr
+Methane 13: CH2Br2 + H2 -> CH4 + Br2
+Coke 8: CH2Br2 -> C + 2HBr
+
+
+
+CH2Br2(g) + * -> CH2Br2
+H2(g) + 2* -> 2H
+CH2Br2 + * -> CH2Br + Br
+CH2Br + * -> CH2 + Br
+CH2Br + H -> CH3Br + *
+CH2 + H -> CH3 + *
+CH3 + Br -> CH3Br + *
+CH2 + * -> CH + H
+CH + * -> C + H
+CH3 + H -> CH4 + *
+H + Br -> HBr + *
+CH3Br -> CH3Br(g) + *
+CH4 -> CH4(g) + *
+2Br -> Br2 + *
+Br2 -> Br2(g) + *
+HBr -> HBr(g) + *
