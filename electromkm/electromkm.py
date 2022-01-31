@@ -8,7 +8,6 @@ from scipy.integrate import solve_ivp
 from natsort import natsorted
 from constants import *
 from functions import *
-from math import pi
 
 class electroMKM:
     """
@@ -172,7 +171,7 @@ class electroMKM:
                 mw += m_dict[i]
             self.masses.append(mw)
         self.MW = dict(zip(self.species_gas, self.masses))
-        # ---------------------------------------------------------------------------------
+        #----------------------------------------------------------------------------------
         self.m = [0]*self.NR   # List needed for adsorption kinetic constants
         for i in range(self.NR):
             if self.reaction_type[i] == 'sur':
@@ -224,12 +223,23 @@ class electroMKM:
         self.g_ts = H_ts - t_ref * S_ts
         ###########################################################################
         # Convert global reaction string to stoichiometric vectors
+        ###########################################################################
         self.v_global = np.zeros((self.NC_tot, self.NGR))
         for i in range(self.NC_tot):
             for j in range(self.NGR):
                 reaction_list = self.gr_string[j].split()
                 arrow_index = reaction_list.index('->')
-                if self.species_tot[i].strip('(g)') in reaction_list:
+                if ((self.species_tot[i] == "H(e)") and (self.species_tot[i] in reaction_list)):
+                    if reaction_list.index(self.species_tot[i]) < arrow_index:
+                        self.v_global[i, j] = -1
+                    else:
+                        self.v_global[i, j] = 1
+                elif ((self.species_tot[i] == "H(e)") and ("2{}".format(self.species_tot[i]) in reaction_list)):
+                    if reaction_list.index("2{}".format(self.species_tot[i])) < arrow_index:
+                        self.v_global[i, j] = -2
+                    else:
+                        self.v_global[i, j] = 2                 
+                elif self.species_tot[i].strip('(g)') in reaction_list:
                     if reaction_list.index(self.species_tot[i].strip('(g)')) < arrow_index:
                         self.v_global[i, j] = -1
                     else:
@@ -250,12 +260,15 @@ class electroMKM:
                 if (i < self.NC_sur) and (self.species_tot[i]+'(g)' in self.species_gas):
                     self.v_global[i, j] = 0
         #############################################################################
-        # stoichiometric vector for global_reactions
+        # Stoichiometric vector for global reactions
+        #############################################################################
         self.stoich_numbers = np.zeros((self.NR, self.NGR))
         for i in range(self.NGR):
-            sol = np.linalg.lstsq(
-                self.v_matrix, self.v_global[:, i], rcond=None)
+            sol = np.linalg.lstsq(self.v_matrix, self.v_global[:, i], rcond=None)
             self.stoich_numbers[:, i] = np.round(sol[0], decimals=2)
+        #############################################################################
+        # Reaction energy profiles (H, S and G)
+        #############################################################################
         self.dh_reaction = np.zeros(self.NR)
         self.ds_reaction = np.zeros(self.NR)
         self.dg_reaction = np.zeros(self.NR)
@@ -307,20 +320,20 @@ class electroMKM:
                     self.ds_barrier_rev[i] = 0.0
                     self.dg_barrier[i] = self.dg_reaction[i]
                     self.dg_barrier_rev[i] = 0.0
-
-        self.ODE_params = [1e-12, 1e-64, 1.0E3]
+        #############################################################################################
+        self.ODE_params = [1e-12, 1e-64, 1.0E3] # Default ODE parameters (reltol, abstol and t_final)
         self.v_f = stoic_forward(self.v_matrix)
         self.v_b = stoic_backward(self.v_matrix)
-        r = []
+        self.r = []
         for i in range(self.NR):
-            r.append('R{}'.format(i+1))
+            self.r.append('R{}'.format(i+1))
         self.df_system = pd.DataFrame(self.v_matrix, index=species_sur_label+species_gas_label,
-                                      columns=[r, reaction_type_list])
+                                      columns=[self.r, reaction_type_list])
         self.df_system.index.name = 'species'
         self.df_gibbs = pd.DataFrame(np.array([self.dg_reaction,
                                                self.dg_barrier,
                                                self.dg_barrier_rev]).T,
-                                     index=[r, reaction_type_list],
+                                     index=[self.r, reaction_type_list],
                                      columns=['DGR / eV',
                                               'DG barrier / eV',
                                               'DG reverse barrier / eV'])
@@ -418,7 +431,7 @@ class electroMKM:
 
     def jac_diff(self, time, y, kd, ki):
         """
-        Returns Jacobian matrix of the system for
+        Returns the analytical Jacobian matrix of the system for
         the differential reactor model.
         """
         J = np.zeros((len(y), len(y)))
@@ -461,7 +474,7 @@ class electroMKM:
                                end_events=None,
                                jacobian_matrix=None):
         """
-        Helper function
+        Helper function for solve_ivp integrator.
         """
         kd, ki = self.kinetic_coeff(overpotential, 
                                     temperature)
@@ -485,24 +498,23 @@ class electroMKM:
                     temperature=298.0,
                     pressure=1e5,
                     verbose=0,
-                    jac=True):
+                    jac=False):
         """
-        Simulates a steady-state catalytic run at the desired reaction conditions.        
+        Simulates a steady-state electrocatalytic run at the defined operating conditions.        
         Args:
-            overpotential(float): applied overpotential [V].
+            overpotential(float): applied overpotential [V vs SHE].
             pH(float): pH of the electrolyte solution [-].
-            temperature(float): Temperature of the experiment [K].
-            pressure(float): Total abs. pressure of the system [Pa].
-            initial_conditions(nparray): initial coverage of the catalyst surface [-].
+            temperature(float): Temperature of the system [K].
+            pressure(float): Absolute pressure of the system [Pa].
+            initial_conditions(nparray): Initial surface coverage [-].
             verbose(int): 0=print all output; 1=print nothing.        
         Returns:
-            (dict): Full report of the electrocatalytic simulation.        
+            (dict): Report of the electrocatalytic simulation.        
         """
         if verbose == 0:
             print('{}: Microkinetic run'.format(self.name))
-            print('Overpotential = {}V    pH = {}'.format(overpotential, pH))
-            print('Temperature = {}K    Pressure = {:.1f}bar'.format(
-                temperature, pressure/1e5))
+            print('Overpotential = {}V vs SHE    pH = {}'.format(overpotential, pH))
+            print('Temperature = {}K    Pressure = {:.1f}bar'.format(temperature, pressure/1e5))
         y_0 = np.zeros(self.NC_tot)
         if initial_conditions is None:  # Convention: first surface species is the active site
             y_0[0] = 1.0
@@ -510,7 +522,7 @@ class electroMKM:
             y_0[indexH] = 10 ** (-pH)
         else:
             y_0[:self.NC_sur] = initial_conditions[:self.NC_sur]
-        y_0[self.NC_sur:] = 0.0 # We need to address this.
+        y_0[self.NC_sur:] = 0.0 # This point needs to be addressed deeper in the future! 
         #-----------------------------------------------------------------------------------------------
         if temperature < 0.0:
             raise ValueError('Wrong temperature (T > 0 K)')
@@ -580,7 +592,7 @@ class electroMKM:
             print('{} Selectivity: {:.2f}%'.format(self.target_label,
                                                    s_target_sr*100.0))
             print('Most Abundant Surface Intermediate: {} Coverage: {:.2f}% '.format(
-                key_masi, value_masi*100.0))
+                key_masi, value_masi))
             print('CPU time: {:.2f} s'.format(time.time() - t0))
         return output_dict
 
@@ -593,6 +605,18 @@ class electroMKM:
             pressure=1e5,
             verbose=0,
             jac=False):
+        """
+        Returns the Tafel plot for the defined potential range.
+        Args:
+            reaction_label(str): Label of the reaction of interest.
+            overpotential_vector(ndarray): applied overpotential vector [V].
+            pH(float): pH of the electrolyte solution [-].
+            initial_conditions(ndarray): initial surface coverage and gas composition [-]
+            temperature(float): Temperature of the system [K].
+            pressure(float): Absolute pressure of the system [Pa].
+            verbose(bool): 0=; 1=.
+            jac(bool): Inclusion of the analytical Jacobian for ODE numerical solution.
+        """
         exp = []
         j_vector = np.zeros(len(overpotential_vector))
         if reaction_label not in self.grl.keys():
@@ -606,14 +630,11 @@ class electroMKM:
                                            verbose=verbose,
                                            jac=jac))
             j_vector[i] = exp[i]['j_{}'.format(reaction_label)]
-            print("U = {} V vs SHE    j = {}".format(overpotential_vector[i],j_vector[i]))
-        # NB in the books: ln with e as base, log with base 10
-        #    Numpy: log is ln, log10 is log
+            print("--------------------------------------------")
         plt.plot(overpotential_vector, np.log10(abs(j_vector)))
         plt.title("{}: Tafel plot".format(self.name))
         plt.xlabel("Overpotential / V vs SHE")
         plt.ylabel("log10(|j|)")
         plt.grid()
         plt.show()            
-        return j_vector
-        
+        return j_vector     
