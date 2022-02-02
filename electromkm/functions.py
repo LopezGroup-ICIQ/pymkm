@@ -53,6 +53,31 @@ def calc_reac_order(partial_pressure, reaction_rate):
     R2 = reg.score(x, y)
     return napp, R2
 
+def calc_tafel_slope(overpotential, current_density):
+    """
+    Function for evaluating the Tafel slope of an electrochemical system.
+    Args:
+        overpotential(ndarray): applied overpotential array [V]
+        current_density(ndarray): current density array[mA cm-2]            
+    Returns:
+        Apparent reaction order with respect to the selected species
+    """
+    lm = LinearRegression()
+    xx = []
+    yy = []
+    for i in range(len(overpotential)):
+        if overpotential[i] < -0.1:
+            xx.append(overpotential[i])
+            yy.append(current_density[i])
+    xx = np.array(xx)
+    yy = np.array(yy)
+    x = pd.DataFrame(xx)
+    y = pd.DataFrame(np.log10(abs(yy)))
+    reg = lm.fit(x, y)
+    m = reg.coef_[0, 0]
+    R2 = reg.score(x, y)
+    return m, R2
+
 def stoic_forward(matrix):
     """
     Filter function for the stoichiometric matrix.

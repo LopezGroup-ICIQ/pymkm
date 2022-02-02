@@ -1,4 +1,4 @@
-"""electroMKM class for electrocatalysis. IN PROGRESS"""
+"""electroMKM class for electrocatalysis."""
 
 import time
 import numpy as np
@@ -354,6 +354,22 @@ class electroMKM:
     def info(self):
         print(self)
 
+    def set_ODE_params(self, t_final=1000.0, reltol=1e-12, abstol=1e-64):
+        """
+        Set paramters for numerical integration of ODE solvers.
+        Args:
+            t_final(float): total integration time [s]
+            reltol(float): relative tolerance 
+            abstol(float): absolute tolerance
+        """
+        self.ODE_params[0] = reltol
+        self.ODE_params[1] = abstol
+        self.ODE_params[2] = t_final
+        print("Final integration time = {}s".format(t_final))
+        print("Relative tolerance = {}".format(reltol))
+        print("Absolute tolerance = {}".format(abstol))
+        return "Changed ODE solver parameters."
+
     def kinetic_coeff(self, overpotential, temperature, area_active_site=1e-19):
         """
         Returns the kinetic coefficient for the direct and reverse reactions, according to 
@@ -372,18 +388,18 @@ class electroMKM:
         for reaction in range(self.NR):
             Keq[reaction] = np.exp(-self.dg_reaction[reaction] / (temperature * K_B))
             if self.reaction_type[reaction] == 'ads':
-                A = area_active_site / \
-                    (2 * np.pi * self.m[reaction] * K_BU * temperature) ** 0.5
-                kd[reaction] = A * \
-                    np.exp(-self.dg_barrier[reaction] / K_B / temperature)
+                #A = area_active_site / \
+                #    (2 * np.pi * self.m[reaction] * K_BU * temperature) ** 0.5
+                #kd[reaction] = A * \
+                #    np.exp(-self.dg_barrier[reaction] / K_B / temperature)
+                kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
             elif self.reaction_type[reaction] == 'des':
                 kd[reaction] = (K_B * temperature / H) * \
                     np.exp(-self.dg_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
             elif self.reaction_type[reaction] == 'sur':  
-                kd[reaction] = (K_B * temperature / H) * \
-                    np.exp(-self.dg_barrier[reaction] / temperature / K_B)
+                kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
             else: # Charge transfer reaction
                 f = F / (R * temperature)  # C/J
@@ -497,6 +513,7 @@ class electroMKM:
                     initial_conditions=None,
                     temperature=298.0,
                     pressure=1e5,
+                    gas_composition=None,
                     verbose=0,
                     jac=False):
         """
@@ -522,7 +539,10 @@ class electroMKM:
             y_0[indexH] = 10 ** (-pH)
         else:
             y_0[:self.NC_sur] = initial_conditions[:self.NC_sur]
-        y_0[self.NC_sur:] = 0.0 # This point needs to be addressed deeper in the future! 
+        if gas_composition is None:
+            y_0[self.NC_sur:] = 0.0
+        else:
+            y_0[self.NC_sur:] = pressure * gas_composition
         #-----------------------------------------------------------------------------------------------
         if temperature < 0.0:
             raise ValueError('Wrong temperature (T > 0 K)')
@@ -596,15 +616,16 @@ class electroMKM:
             print('CPU time: {:.2f} s'.format(time.time() - t0))
         return output_dict
 
-    def j_U(self,
-            reaction_label,
-            overpotential_vector,
-            pH,
-            initial_conditions=None,
-            temperature=298.0,
-            pressure=1e5,
-            verbose=0,
-            jac=False):
+    def tafel_plot(self,
+                   reaction_label,
+                   overpotential_vector,
+                   pH,
+                   initial_conditions=None,
+                   temperature=298.0,
+                   pressure=1e5,
+                   gas_composition=None,
+                   verbose=0,
+                   jac=False):
         """
         Returns the Tafel plot for the defined potential range.
         Args:
@@ -627,14 +648,26 @@ class electroMKM:
                                            initial_conditions=initial_conditions,
                                            temperature=temperature,
                                            pressure=pressure,
+                                           gas_composition=gas_composition,
                                            verbose=verbose,
                                            jac=jac))
             j_vector[i] = exp[i]['j_{}'.format(reaction_label)]
             print("--------------------------------------------")
+        tafel_slope = calc_tafel_slope(overpotential_vector, j_vector)[0]
+        f = F / R / temperature
+        alfa = 1 + (tafel_slope / f)
+        fig = plt.figure(1, figsize=(6,4), dpi=300)
+        plt.subplot(2, 1, 1)
+        plt.plot(overpotential_vector, j_vector)
+        plt.xlabel("Overpotential / V vs SHE")
+        plt.plot("j / mA cm-2")
+        plt.title("Current density vs U")
+        plt.grid()
+        plt.subplot(2, 1, 2)
         plt.plot(overpotential_vector, np.log10(abs(j_vector)))
         plt.title("{}: Tafel plot".format(self.name))
         plt.xlabel("Overpotential / V vs SHE")
         plt.ylabel("log10(|j|)")
         plt.grid()
         plt.show()            
-        return j_vector     
+        return "Tafel slope = {} V-1    alfa = {}".format(tafel_slope, alfa)     
