@@ -592,7 +592,7 @@ class electroMKM:
         s_target_sr = r_sr[self.target] / (r_sr[self.target] + r_sr[bp].sum())
         value_masi = max(yfin_sr[:self.NC_sur-1])
         key_masi = self.species_sur[np.argmax(yfin_sr[:self.NC_sur-1])]
-        masi_sr = {key_masi: value_masi*100.0}
+        masi_sr = {key_masi: value_masi}
         coverage_dict = dict(zip(self.species_sur, yfin_sr))
         ddt_dict = dict(zip(self.species_tot, final_sr))
         r_dict = dict(zip(r, r_sr))
@@ -655,7 +655,7 @@ class electroMKM:
             print("--------------------------------------------")
         tafel_slope = calc_tafel_slope(overpotential_vector, j_vector)[0]
         f = F / R / temperature
-        alfa = 1 + (tafel_slope / f)
+        alfa = 1 + (tafel_slope / f) # Global charge transfer coefficient
         fig = plt.figure(1, figsize=(6,4), dpi=300)
         plt.subplot(2, 1, 1)
         plt.plot(overpotential_vector, j_vector)
