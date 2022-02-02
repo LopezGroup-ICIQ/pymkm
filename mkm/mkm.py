@@ -310,7 +310,7 @@ class MKM:
                     self.dg_barrier[i] = self.dg_reaction[i]
                     self.dg_barrier_rev[i] = 0.0
 
-        self.ODE_params = [1e-12, 1e-70, 1.0]
+        self.ODE_params = [1e-12, 1e-70, 1e3]
         self.v_f = stoic_forward(self.v_matrix)
         self.v_b = stoic_backward(self.v_matrix)
         r = []
@@ -377,6 +377,29 @@ class MKM:
             return None
         else:
             return None
+
+    def set_ODE_params(self, t_final=1e3, reltol=1e-12, abstol=1e-64):
+        """
+        Set parameters for ODE numerical solution with scipy solve_ivp solver.
+        Args:
+            t_final(float): final integration time [s]. Default to 1000 s.
+            reltol(float): relative tolerance. Default to 1e-12.
+            abstol(float): absolute tolerance. Default to 1e-64.
+        """
+        self.ODE_params[0] = reltol
+        self.ODE_params[1] = abstol
+        self.ODE_params[2] = t_final
+        print("Integration time = {}s".format(t_final))
+        print("Relative tolerance = {}".format(reltol))
+        print("Absolute tolerance = {}".format(abstol))
+        return "Changed ODE parameters."
+
+    def get_ODE_params(self):
+        """Print ODE parameters used in scipy solver solve_ivp."""
+        print("Integration time = {}s".format(self.ODE_params[2]))
+        print("Relative tolerance = {}".format(self.ODE_params[0]))
+        print("Absolute tolerance = {}".format(self.ODE_params[1]))
+        return None
 
     def conversion(self, reactant, P_in, P_out):
         """
