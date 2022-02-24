@@ -11,4 +11,4 @@ The main strength of pymkm is in its user-frienly way to generate information, s
 Santiago Morandi (ICIQ).
 
 ## Contributors
-Albert Sabadell-Rendon (ICIQ), Ranga Rohit Seemakurthi (ICIQ).
+Albert Sabadell-Rendon (ICIQ), Sergio Pablo García Carrillo (ICIQ), Ranga Rohit Seemakurthi (ICIQ).

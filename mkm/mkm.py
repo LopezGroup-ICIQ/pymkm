@@ -10,6 +10,7 @@ from natsort import natsorted
 from thermo import k_eq_H, k_eq_S, reaction_enthalpy, reaction_entropy
 from constants import *
 from functions import *
+from reactor import *
 import graphviz
 from math import pi
 
@@ -47,11 +48,7 @@ class MKM:
         self.reactor_model = reactor
         self.inerts = inerts
         ############################################################################
-        # rm.mkm parsing
-        # - Global reactions of the system
-        # - Stoichiometric matrix
-        # - Species (gas and surface)
-        # - Reaction types
+        # rm.mkm parsing -> Global reactions, Stoichiometric matrix, Species 
         ############################################################################
         rm = open(rm_input_file, "r")
         lines = rm.readlines()
@@ -187,8 +184,7 @@ class MKM:
                     else:
                         self.m[i] = self.masses[j] / (N_AV*1000)
         ###########################################################################
-        # g.mkm parsing
-        # - System energetics (H, S and G)
+        # g.mkm parsing -> System energetics (H, S and G)
         ###########################################################################
         e = open('./{}'.format(g_input_file), 'r')
         lines = e.readlines()
@@ -338,6 +334,10 @@ class MKM:
         if (reactor not in ("differential", "dynamic")):
             raise "Wrong reactor model definition. Please choose between 'differential' or 'dynamic'."
         self.reactor_model = reactor
+        if reactor == "differential":
+            self.reactor = DifferentialPFR()
+        elif reactor == "dynamic":
+            self.reactor = DynamicCSTR()
         return "Reactor model: {}".format(reactor)
 
     def set_CSTR_params(self,
@@ -421,16 +421,6 @@ class MKM:
         p = product_index
         S = (P_out[p] - P_in[p]) / (P_in[r] - P_out[r])
         return S
-
-    def resa(self, reactant, product, P_in, P_out):
-        """
-        Returns the yield of reactant i to product j.
-        Internal function used for the dynamic CSTR model
-        """
-        X = self.conversion(reactant, P_in, P_out)
-        S = self.selectivity(reactant, product, P_in, P_out)
-        Y = X * S
-        return Y
 
     def __str__(self):
         print("System: {}".format(self.name))
@@ -784,13 +774,6 @@ class MKM:
         for i in range(self.NC_gas):
             J[self.NC_sur+i, self.NC_sur+i] -= 1/self.CSTR_tau
         return J
-
-    def __steady_state(self, time, y, kd, ki):
-        """
-        Function used to terminate the ODE integration at steady state conditions.
-        """
-        return np.sum(abs(self.differential_pfr(time, y, kd, ki)))
-    __steady_state.terminal = True
 
     def __ode_solver_solve_ivp(self, y_0, dy, temperature,
                                reltol, abstol, t_final,
