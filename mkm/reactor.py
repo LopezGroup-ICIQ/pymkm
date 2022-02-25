@@ -1,3 +1,5 @@
+"""Module providing the interface for the reactor models for microkinetic modeling."""
+
 from abc import abstractmethod
 from constants import *
 from functions import *
@@ -5,26 +7,12 @@ from abc import ABC
 import numpy as np
 import math
 
-def net_rate(y, kd, ki, v_matrix):
-    """
-    Returns the net reaction rate for each elementary reaction.
-    Args:
-        y(ndarray): surface coverage + partial pressures array [-/Pa].
-        kd, ki(ndarray): kinetic constants of the direct/reverse steps.
-    Returns:
-        ndarray containing the net reaction rate for all the steps [1/s].
-    """
-    net_rate = np.zeros(len(kd))
-    v_ff = stoic_forward(v_matrix)
-    v_bb = stoic_backward(v_matrix)
-    net_rate = kd * np.prod(y ** v_ff.T, axis=1) - ki * np.prod(y ** v_bb.T, axis=1)
-    return net_rate
-
 class ReactorModel(ABC):
-    def __init__(self, name, params):
-        self.name = name
-        self._level = 1
-        self.params = params
+    def __init__(self):
+        """
+        Abstract class for the implementation of reactor models.
+        """
+        pass
 
     @abstractmethod
     def ode(self):
@@ -50,7 +38,35 @@ class ReactorModel(ABC):
         """
         ...
 
+    @abstractmethod
+    def conversion(self):
+        """
+        Provides the conversion of reactant i.        
+        """
+
+    @abstractmethod
+    def selectivity(self):
+        """
+        Provides the selectivity of reactant i towards product j.
+        """
+
+    @abstractmethod
+    def yyield(self):
+        """
+        Provides the yield of reactant i towards product j.
+        """
+
 class DifferentialPFR(ReactorModel):
+    def __init__(self):
+        """
+        Reactor model: Differential Plug-Flow Reactor (PFR)
+        Main assumptions:
+            - Differential volume
+            - Zero-conversion model
+            - Isothermal, isobaric        
+        """
+        pass
+
     def ode(self, time, y, kd, ki, v_matrix, NC_sur):
         # Surface species
         dy = v_matrix @ net_rate(y, kd, ki, v_matrix)
@@ -90,6 +106,18 @@ class DifferentialPFR(ReactorModel):
         return np.sum(abs(self.ode(time, y, kd, ki, v_matrix, NC_sur)))
     termination_event.terminal = True
 
+    def conversion(self, gas_reactant_index):
+        return 0.0
+
+    def selectivity(self, gas_reactant_index, product_reactant_index):
+        S = 0.0
+        return S
+
+    def yyield(self, gas_reactant_index, product_reactant_index):
+        X = self.conversion(gas_reactant_index)
+        S = self.selectivity(gas_reactant_index, product_reactant_index)
+        return X * S    
+
 class DynamicCSTR(ReactorModel):
     def __init__(self, radius=0.01, length=0.01, Q=1e-6, m_cat=1e-3, s_bet=1e5, a_site=1e-19, ss_tol=1e-5):
         """
@@ -119,7 +147,7 @@ class DynamicCSTR(ReactorModel):
         self.a_site = a_site
         self.steady_state_tol = ss_tol
 
-    def ode(self, time, y, kd, ki, P_in, temperature, v_matrix, NC_sur):
+    def ode(self, time, y, kd, ki, v_matrix, NC_sur, temperature, P_in):
         # Surface species
         dy = v_matrix @ net_rate(y, kd, ki)
         # Gas species
@@ -128,7 +156,7 @@ class DynamicCSTR(ReactorModel):
         dy[NC_sur:] += (P_in - y[NC_sur:]) / self.tau
         return dy
 
-    def jacobian(self, time, y, kd, ki, P_in, temperature, v_matrix, NC_sur):
+    def jacobian(self, time, y, kd, ki, v_matrix, NC_sur, temperature, P_in):
         J = np.zeros((len(y), len(y)))
         Jg = np.zeros((len(kd), len(y)))
         Jh = np.zeros((len(kd), len(y)))
@@ -156,11 +184,11 @@ class DynamicCSTR(ReactorModel):
         J[NC_sur:, :] *= (R * temperature * self.s_bet *
                                self.m_cat) / (N_AV * self.volume * self.a_site)
         for i in range(len(y) - NC_sur):
-            J[NC_sur+i, NC_sur+i] -= 1/self.tau
+            J[NC_sur+i, NC_sur+i] -= 1 / self.tau
         return J
 
-    def termination_event(self, time, y, kd, ki, P_in, temperature, v_matrix, NC_sur):
-        return np.sum(abs(self.ode(time, y, kd, ki, P_in, temperature, v_matrix)))
+    def termination_event(self, time, y, kd, ki, v_matrix, NC_sur, temperature, P_in):
+        return np.sum(abs(self.ode(time, y, kd, ki, v_matrix, NC_sur, temperature, P_in)))
     termination_event.terminal = True
 
     def conversion(self, gas_reactant_index, P_in, P_out):
@@ -182,12 +210,14 @@ class DynamicCSTR(ReactorModel):
         S = (P_out[p] - P_in[p]) / (P_in[r] - P_out[r])
         return S
     
-    def resa(self, gas_reactant_index, gas_product_index, P_in, P_out):
+    def yyield(self, gas_reactant_index, gas_product_index, P_in, P_out):
         """
         Returns the yield of reactant i to product j.
         Internal function used for the dynamic CSTR model
         """
         X = self.conversion(gas_reactant_index, P_in, P_out)
         S = self.selectivity(gas_reactant_index, gas_product_index, P_in, P_out)
-        Y = X * S
-        return Y
+        return X * S
+
+    def reaction_rate(self, P_in, P_out, temperature):
+        return self.Q * (P_out - P_in) / (R * temperature)

@@ -14,6 +14,8 @@ from reactor import *
 import graphviz
 from math import pi
 
+reactor_dict = {"differential" : DifferentialPFR(), "dynamic" : DynamicCSTR()}
+
 class MKM:
     """
     A class to represent microkinetic models for heterogeneous catalysis. It provides 
@@ -46,6 +48,7 @@ class MKM:
         self.input_g = g_input_file
         self.t_ref = t_ref
         self.reactor_model = reactor
+        self.reactor = None
         self.inerts = inerts
         ############################################################################
         # rm.mkm parsing -> Global reactions, Stoichiometric matrix, Species 
@@ -309,22 +312,20 @@ class MKM:
         self.ODE_params = [1e-12, 1e-70, 1e3]
         self.v_f = stoic_forward(self.v_matrix)
         self.v_b = stoic_backward(self.v_matrix)
-        r = []
-        for i in range(self.NR):
-            r.append('R{}'.format(i+1))
+        self.r = ['R{}'.format(i+1) for i in range(self.NR)]
         self.df_system = pd.DataFrame(self.v_matrix, index=species_sur_label+species_gas_label,
-                                      columns=[r, reaction_type_list])
+                                      columns=[self.r, reaction_type_list])
         self.df_system.index.name = 'species'
         self.df_gibbs = pd.DataFrame(np.array([self.dg_reaction,
                                                self.dg_barrier,
                                                self.dg_barrier_rev]).T,
-                                     index=[r, reaction_type_list],
+                                     index=[self.r, reaction_type_list],
                                      columns=['DGR / eV',
                                               'DG barrier / eV',
                                               'DG reverse barrier / eV'])
         self.df_gibbs.index.name = 'reaction'
 #-------------------------------------------------------------------------------------------------------------#
-    def set_reactor(self, reactor):
+    def set_reactor(self, reactor="differential"):
         """
         Define the reactor model 
         Two options:
@@ -401,27 +402,6 @@ class MKM:
         print("Absolute tolerance = {}".format(self.ODE_params[1]))
         return None
 
-    def conversion(self, reactant, P_in, P_out):
-        """
-        Returns the conversion of reactant i
-        Internal function used for the dynamic CSTR model
-        """
-        index = self.species_gas.index(reactant)
-        X = 1 - (P_out[index] / P_in[index])
-        return X
-
-    def selectivity(self, reactant, product, P_in, P_out):
-        """
-        Returns the selectivity of reactant i to product j
-        Internal function used for the dynamic CSTR model
-        """
-        reactant_index = self.species_gas.index(reactant)
-        product_index = self.species_gas.index(product)
-        r = reactant_index
-        p = product_index
-        S = (P_out[p] - P_in[p]) / (P_in[r] - P_out[r])
-        return S
-
     def __str__(self):
         print("System: {}".format(self.name))
         print("")
@@ -480,13 +460,6 @@ class MKM:
                         rn.edge(self.species_tot[a[i]], self.species_tot[b[k]])
         rn.render(view=True)
 
-    def rxn_profile():
-        """
-        Returns a plot with the reaction energy profile of the process.
-        WORK IN PROGRESS
-        """
-        pass
-
     def apply_bep(self,
                   reaction,
                   q,
@@ -495,7 +468,6 @@ class MKM:
         Function that applies a BEP relation to the selected elementary reaction.
 
             dh_barrier = q + m * dh_reaction [eV]
-
         Args:
             reaction(str): reaction string. Ex: "R12"
             q(float): intercept of the line
@@ -585,8 +557,6 @@ class MKM:
         extracted by the DFT-derived microkinetic model.        
         Args:
             temperature(float): temperature in Kelvin [K].
-        Returns:
-            None
         """
         k_h = np.exp(-self.dh_reaction/(K_B*temperature))
         k_s = np.exp(self.ds_reaction/K_B)
@@ -636,164 +606,25 @@ class MKM:
             print("")
         return None
 
-    def kinetic_coeff(self, temperature, area_active_site=1e-19):
+    def __ode_solver_solve_ivp(self,
+                               y_0,
+                               dy, 
+                               reltol, 
+                               abstol, 
+                               t_final,
+                               ode_params,
+                               end_events=None,
+                               jacobian_matrix=None):
         """
-        Returns the kinetic coefficient for the direct and reverse reactions, according to 
-        the reaction type (adsorption, desorption or surface reaction) and TST.                
-        Args: 
-            temperature(float): Temperature in [K].
-            A_site_0(float): Area of the catalytic ensemble in [m2]. Default: 1e-19[m2]
-        """
-        Keq = np.zeros(self.NR)  # Equilibrium constant
-        kd = np.zeros(self.NR)   # Direct constant
-        kr = np.zeros(self.NR)   # Reverse constant
-        for reaction in range(self.NR):
-            Keq[reaction] = np.exp(-self.dg_reaction[reaction] /
-                                   temperature / K_B)
-            if self.reaction_type[reaction] == 'ads':
-                A = area_active_site / \
-                    (2 * np.pi * self.m[reaction] * K_BU * temperature) ** 0.5
-                kd[reaction] = A * \
-                    np.exp(-self.dg_barrier[reaction] / K_B / temperature)
-                kr[reaction] = kd[reaction] / Keq[reaction]
-            elif self.reaction_type[reaction] == 'des':
-                kd[reaction] = (K_B * temperature / H) * \
-                    np.exp(-self.dg_barrier[reaction] / temperature / K_B)
-                kr[reaction] = kd[reaction] / Keq[reaction]
-            else:  # Surface reaction
-                kd[reaction] = (K_B * temperature / H) * \
-                    np.exp(-self.dg_barrier[reaction] / temperature / K_B)
-                kr[reaction] = kd[reaction] / Keq[reaction]
-        return kd, kr
-
-    def net_rate(self, y, kd, ki):
-        """
-        Returns the net reaction rate for each elementary reaction.
-        Args:
-            y(ndarray): surface coverage + partial pressures array [-/Pa].
-            kd, ki(ndarray): kinetic constants of the direct/reverse steps.
-        Returns:
-            ndarray containing the net reaction rate for all the steps [1/s].
-        """
-        net_rate = np.zeros(len(kd))
-        v_ff = self.v_f
-        v_bb = self.v_b
-        net_rate = kd * np.prod(y ** v_ff.T, axis=1) - ki * np.prod(y ** v_bb.T, axis=1)
-        return net_rate
-
-    def differential_pfr(self, time, y, kd, ki):
-        """
-        Returns the rhs of the ODE system.
-        Reactor model: differential PFR (zero conversion)
-        """
-        # Surface species
-        dy = self.v_matrix @ self.net_rate(y, kd, ki)
-        # Gas species
-        dy[self.NC_sur:] = 0.0
-        return dy
-
-    def jac_diff(self, time, y, kd, ki):
-        """
-        Returns Jacobian matrix of the system for
-        the differential reactor model. 
-        """
-        J = np.zeros((len(y), len(y)))
-        Jg = np.zeros((len(kd), len(y)))
-        Jh = np.zeros((len(kd), len(y)))
-        v_f = stoic_forward(self.v_matrix)
-        v_b = stoic_backward(self.v_matrix)
-        for r in range(len(kd)):
-            for s in range(len(y)):
-                if v_f[s, r] == 1:
-                    v_f[s, r] -= 1
-                    Jg[r, s] = kd[r] * np.prod(y ** v_f[:, r])
-                    v_f[s, r] += 1
-                elif v_f[s, r] == 2:
-                    v_f[s, r] -= 1
-                    Jg[r, s] = 2 * kd[r] * np.prod(y ** v_f[:, r])
-                    v_f[s, r] += 1
-                if v_b[s, r] == 1:
-                    v_b[s, r] -= 1
-                    Jh[r, s] = ki[r] * np.prod(y ** v_b[:, r])
-                    v_b[s, r] += 1
-                elif v_b[s, r] == 2:
-                    v_b[s, r] -= 1
-                    Jh[r, s] = 2 * ki[r] * np.prod(y ** v_b[:, r])
-                    v_b[s, r] += 1
-        J = self.v_matrix @ (Jg - Jh)
-        J[self.NC_sur:, :] = 0.0
-        return J
-
-    def dynamic_cstr(self, time, y, kd, ki, P_in, temperature):
-        """
-        Returns the rhs of the ODE system.
-        Reactor model: dynamic CSTR
-        Args:
-            P_in(ndarray): inlet partial pressures of gas species in Pascal [Pa]
-            temperature(float): temperature in Kelvin [K]
-        """
-        # Surface species
-        dy = self.v_matrix @ self.net_rate(y, kd, ki)
-        # Gas species
-        dy[self.NC_sur:] *= (R * temperature/(N_AV * self.CSTR_V))
-        dy[self.NC_sur:] *= (self.CSTR_sbet * self.CSTR_mcat/self.CSTR_asite)
-        dy[self.NC_sur:] += (P_in - y[self.NC_sur:]) / self.CSTR_tau
-        return dy
-
-    def jac_dyn(self, time, y, kd, ki, P_in, temperature):
-        """
-        Returns the Jacobian matrix of the ODE for the
-        dynamic CSTR model.
-        """
-        J = np.zeros((len(y), len(y)))
-        Jg = np.zeros((len(kd), len(y)))
-        Jh = np.zeros((len(kd), len(y)))
-        v_f = stoic_forward(self.v_matrix)
-        v_b = stoic_backward(self.v_matrix)
-        for r in range(len(kd)):
-            for s in range(len(y)):
-                if v_f[s, r] == 1:
-                    v_f[s, r] -= 1
-                    Jg[r, s] = kd[r] * np.prod(y ** v_f[:, r])
-                    v_f[s, r] += 1
-                elif v_f[s, r] == 2:
-                    v_f[s, r] -= 1
-                    Jg[r, s] = 2 * kd[r] * np.prod(y ** v_f[:, r])
-                    v_f[s, r] += 1
-                if v_b[s, r] == 1:
-                    v_b[s, r] -= 1
-                    Jh[r, s] = ki[r] * np.prod(y ** v_b[:, r])
-                    v_b[s, r] += 1
-                elif v_b[s, r] == 2:
-                    v_b[s, r] -= 1
-                    Jh[r, s] = 2 * ki[r] * np.prod(y ** v_b[:, r])
-                    v_b[s, r] += 1
-        J = self.v_matrix @ (Jg - Jh)
-        J[self.NC_sur:, :] *= (R * temperature * self.CSTR_sbet *
-                               self.CSTR_mcat) / (N_AV * self.CSTR_V * self.CSTR_asite)
-        for i in range(self.NC_gas):
-            J[self.NC_sur+i, self.NC_sur+i] -= 1/self.CSTR_tau
-        return J
-
-    def __ode_solver_solve_ivp(self, y_0, dy, temperature,
-                               reltol, abstol, t_final,
-                               end_events=None, jacobian_matrix=None,
-                               P_in=None):
-        """
-        Helper function
-        """
-        kd, ki = self.kinetic_coeff(temperature)
-        if self.reactor_model == 'dynamic':
-            args_list = [kd, ki, P_in, temperature]
-        else:
-            args_list = [kd, ki]
+        Helper function (...)
+        """        
         r = solve_ivp(dy,
                       (0.0, t_final),
                       y_0,
                       method='BDF', 
                       events=end_events,
                       jac=jacobian_matrix,
-                      args=args_list,
+                      args=tuple(ode_params),
                       atol=abstol,
                       rtol=reltol)
         return r
@@ -803,8 +634,7 @@ class MKM:
                    pressure,
                    gas_composition,
                    initial_conditions=None,
-                   verbose=0,
-                   jac=True):
+                   verbose=0):
         """
         Simulates a single catalytic run at the desired reaction conditions.        
         Args:
@@ -820,10 +650,9 @@ class MKM:
             print('{}: Microkinetic run'.format(self.name))
             if self.reactor_model == 'dynamic':
                 print('Reactor model: Dynamic CSTR')
-            else:
+            elif self.reactor_model == 'differential':
                 print('Reactor model: Differential PFR')
-            print('Temperature = {}K    Pressure = {:.1f}bar'.format(
-                temperature, pressure/1e5))
+            print('Temperature = {}K    Pressure = {:.1f}bar'.format(temperature, pressure/1e5))
             sgas = []
             for i in self.species_gas:
                 sgas.append(i.strip('(g)'))
@@ -840,142 +669,92 @@ class MKM:
             y_0[:self.NC_sur] = initial_conditions[:self.NC_sur]
         y_0[self.NC_sur:] = pressure * np.array(gas_composition)
         if np.sum(y_0[:self.NC_sur]) != 1.0:
-            raise ValueError(
-                'Wrong initial surface coverage: the sum of the provided coverage is not equal 1.')
+            raise ValueError('Fatal Error: the sum of the provided surface coverage is not equal 1.')
         if sum(gas_composition) != 1.0:
-            raise ValueError(
-                'Wrong gas composition: the sum of the provided molar fractions is not equal to 1.')
+            raise ValueError('Fatal Error: the sum of the provided molar fractions is not equal to 1.')
         for molar_fraction in gas_composition:
             if (molar_fraction < 0.0) or (molar_fraction > 1.0):
-                raise ValueError(
-                    'Wrong gas composition: molar fractions must be between 0 and 1.')
+                raise ValueError('Fatal Error: molar fractions must be between 0 and 1.')
         if temperature < 0.0:
-            raise ValueError('Wrong temperature (T > 0 K)')
+            raise ValueError('Fatal Error: provided temperature is < 0 K.')
         if pressure < 0.0:
-            raise ValueError('Wrong pressure (P > 0 Pa)')
-        results_sr = []                      # solve_ivp solver output
-        final_sr = []                        # final Value of derivatives
-        yfin_sr = np.zeros((self.NC_tot))    # steady-state output [-]
-        r_sr = np.zeros((self.NR))           # reaction rate [1/s]
-        s_target_sr = np.zeros(1)            # selectivity
-        t0 = time.time()
-        keys = ['T',
-                'P',
-                'y_in',
-                'theta',
-                'ddt',
-                'r',
-                *['r_{}'.format(i) for i in list(self.grl.keys())],
-                'S_{}'.format(self.target_label),
-                'MASI',
-                'solver']
-        r = ['R{}'.format(i+1) for i in range(self.NR)]
+            raise ValueError('Fatal Error: provided pressure is < 0 Pa).')
+
+        kd, ki = kinetic_coeff(self.NR,
+                               self.dg_reaction, 
+                               self.dg_barrier,
+                               temperature, 
+                               self.reaction_type,
+                               self.m)
+        ode_params = [kd, ki, self.v_matrix, self.NC_sur]
+        if self.reactor_model == "dynamic":
+            ode_params.append(temperature)
+            ode_params.append(pressure * gas_composition)
+        keys = ['T', 'P', 'y_in',
+                'y_out', 'theta', 'ddt',
+                'r', *['r_{}'.format(i) for i in list(self.grl.keys())],
+                'conversion', 'S_{}'.format(self.target_label),
+                'MASI', 'solver']
         gas_comp_dict = dict(zip(self.species_gas, gas_composition))
         values = [temperature, pressure / 1e5, gas_comp_dict]
-        if self.reactor_model == 'dynamic':
-            _ = None
-            if jac:
-                _ = self.jac_dyn
-            results_sr = self.__ode_solver_solve_ivp(y_0,
-                                                     self.dynamic_cstr,
-                                                     temperature,
-                                                     *self.ODE_params,
-                                                     end_events=None,
-                                                     P_in=y_0[self.NC_sur:])  # scipy output
-            final_sr = self.dynamic_cstr(results_sr.t[-1],
-                                         results_sr.y[:, -1],
-                                         *self.kinetic_coeff(temperature),
-                                         y_0[self.NC_sur:],
-                                         temperature)  # dydt
-            yfin_sr = results_sr.y[:self.NC_tot, -1]  # y
-            P_in = y_0[self.NC_sur:]
-            P_out = yfin_sr[self.NC_sur:]
-            reactants = []
-            products = []
-            conv = []
-            for species in self.species_gas:
-                index = self.species_gas.index(species)
-                if P_in[index] == 0.0:
-                    products.append(species)
+        t0 = time.time()
+        # scipy output
+        results = self.__ode_solver_solve_ivp(y_0,
+                                              self.reactor.ode,
+                                              *self.ODE_params,
+                                              ode_params,
+                                              end_events=None,
+                                              jacobian_matrix=self.reactor.jacobian)
+        final_y = results.y[:, -1]
+        final_ddt = self.reactor.ode(results.t[-1],
+                                     final_y,
+                                     *ode_params)
+        final_r = net_rate(final_y, kd, ki, self.v_matrix)
+        P_in = y_0[self.NC_sur:]
+        P_out = final_y[self.NC_sur:]
+        reactants = []
+        products = []
+        conv = []
+        for species in self.species_gas:
+            index = self.species_gas.index(species)
+            if P_in[index] == 0.0:
+                products.append(species)
+            else:
+                if species.strip('(g)') in self.inerts:
+                    pass
                 else:
-                    if species.strip('(g)') in self.inerts:
-                        pass
-                    else:
-                        reactants.append(species)
-                        conv.append(self.conversion(species, P_in, P_out))
-            Y = np.zeros(self.NGR)
-            RR = []
-            for reaction in range(self.NGR):
-                try:
-                    x = self.species_gas.index(
-                        self.gr_string[reaction].split()[-3]+'(g)')
-                except:
-                    x = 0
-
-                RR.append(self.CSTR_Q *
-                          (P_out[x] - P_in[x]) / (R * temperature))  # [mol/s]
-            s_target_sr = RR[0] / np.sum(RR)
-            r_sr = self.net_rate(
-                results_sr.y[:, -1], *self.kinetic_coeff(temperature))
-            value_masi = max(yfin_sr[:self.NC_sur-1])
-            key_masi = self.species_sur[np.argmax(yfin_sr[:self.NC_sur-1])]
-            masi_sr = {key_masi: value_masi*100.0}
-            keys += ['y_out', 'conversion']
-            coverage_dict = dict(zip(self.species_sur, yfin_sr[:self.NC_sur]))
-            r_dict = dict(zip(r, r_sr))
-            y_gas_out = P_out / np.sum(P_out)
-            ddt_dict = dict(zip(self.species_tot, final_sr))
-            gas_out = dict(zip(self.species_gas, y_gas_out))
-            conv_dict = dict(zip(reactants, conv))
-            values += [coverage_dict,
-                       ddt_dict,
-                       r_dict,
-                       *RR,
-                       s_target_sr,
-                       masi_sr,
-                       results_sr,
-                       gas_out,
-                       conv_dict]
-            output_dict = dict(zip(keys, values))
-        else:  # differential PFR
-            _ = None
-            if jac:
-                _ = self.jac_diff
-            results_sr = self.__ode_solver_solve_ivp(y_0,
-                                                     self.differential_pfr,
-                                                     temperature,
-                                                     *self.ODE_params,
-                                                     end_events=None,
-                                                     jacobian_matrix=_)
-            final_sr = self.differential_pfr(results_sr.t[-1],
-                                             results_sr.y[:, -1],
-                                             *self.kinetic_coeff(temperature))
-            yfin_sr = results_sr.y[:self.NC_sur, -1]
-            r_sr = self.net_rate(
-                results_sr.y[:, -1], *self.kinetic_coeff(temperature))
-            bp = list(set(self.by_products))
-            s_target_sr = r_sr[self.target] / \
-                (r_sr[self.target] + r_sr[bp].sum())
-            value_masi = max(yfin_sr[:self.NC_sur-1])
-            key_masi = self.species_sur[np.argmax(yfin_sr[:self.NC_sur-1])]
-            masi_sr = {key_masi: value_masi*100.0}
-            coverage_dict = dict(zip(self.species_sur, yfin_sr))
-            ddt_dict = dict(zip(self.species_tot, final_sr))
-            r_dict = dict(zip(r, r_sr))
-            values += [coverage_dict,
-                       ddt_dict,
-                       r_dict,
-                       *[r_sr[i] for i in list(self.grl.values())],
-                       s_target_sr,
-                       masi_sr,
-                       results_sr]
-            output_dict = dict(zip(keys, values))
+                    reactants.append(species)
+                    conv.append(self.reactor.conversion(index, P_in, P_out))
+        RR = []
+        for reaction in range(self.NGR):
+            try:
+                x = self.species_gas.index(
+                    self.gr_string[reaction].split()[-3]+'(g)')
+            except:
+                x = 0
+            if self.reactor_model == "dynamic":
+                RR.append(self.reactor.reaction_rate(P_in[x], P_out[x], temperature))  
+            else:
+                RR.append(final_r[self.grl[reaction]])
+        s_target = RR[0] / np.sum(RR)
+        value_masi = max(final_y[:self.NC_sur-1])
+        key_masi = self.species_sur[np.argmax(final_y[:self.NC_sur-1])]
+        masi = {key_masi: value_masi*100.0}
+        coverage_dict = dict(zip(self.species_sur, final_y[:self.NC_sur]))
+        r_dict = dict(zip(self.r, final_r))
+        y_gas_out = P_out / np.sum(P_out)
+        ddt_dict = dict(zip(self.species_tot, final_ddt))
+        gas_out = dict(zip(self.species_gas, y_gas_out))
+        conv_dict = dict(zip(reactants, conv))
+        values += [gas_out, coverage_dict, ddt_dict,
+                   r_dict, *RR,
+                   conv_dict, s_target,
+                   masi, results]
+        output_dict = dict(zip(keys, values))
         if verbose == 0:
             print('')
-            print(
-                '{} Reaction Rate: {:0.2e} 1/s'.format(self.target_label, r_sr[self.target]))
-            print('{} Selectivity: {:.2f}%'.format(
-                self.target_label, s_target_sr*100.0))
+            print('{} Reaction Rate: {:0.2e} 1/s'.format(self.target_label, final_r[self.target]))
+            print('{} Selectivity: {:.2f}%'.format(self.target_label, s_target_sr*100.0))
             print('Most Abundant Surface Intermediate: {} Coverage: {:.2f}% '.format(
                 key_masi, value_masi*100.0))
             print('CPU time: {:.2f} s'.format(time.time() - t0))
