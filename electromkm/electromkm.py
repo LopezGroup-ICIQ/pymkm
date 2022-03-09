@@ -664,7 +664,7 @@ class electroMKM:
         plt.title("Current density vs U")
         plt.grid()
         plt.subplot(2, 1, 2)
-        plt.plot(overpotential_vector, np.log10(abs(j_vector)))
+        plt.plot(np.log10(abs(j_vector)),overpotential_vector)
         plt.title("{}: Tafel plot".format(self.name))
         plt.xlabel("Overpotential / V vs SHE")
         plt.ylabel("log10(|j|)")

@@ -67,8 +67,8 @@ def calc_tafel_slope(overpotential, current_density):
     yy = []
     for i in range(len(overpotential)):
         if overpotential[i] < -0.1:
-            xx.append(overpotential[i])
-            yy.append(current_density[i])
+            yy.append(overpotential[i])
+            xx.append(current_density[i])
     xx = np.array(xx)
     yy = np.array(yy)
     x = pd.DataFrame(xx)
