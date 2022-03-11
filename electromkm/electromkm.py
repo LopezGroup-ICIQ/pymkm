@@ -8,6 +8,7 @@ from scipy.integrate import solve_ivp
 from natsort import natsorted
 from constants import *
 from functions import *
+from parser import preprocess, get_NGR_NR
 
 class electroMKM:
     """
@@ -43,9 +44,8 @@ class electroMKM:
         ############################################################################
         # rm.mkm -> Global reactions, stoichiometric matrix, species, reaction types
         ############################################################################
-        rm = open(rm_input_file, "r")
-        lines = rm.readlines()
-        self.NGR = lines.index('\n')
+        lines = preprocess(rm_input_file, 3)
+        self.NGR, self.NR = get_NGR_NR(lines)
         global_reaction_label = []
         global_reaction_index = []
         global_reaction_string = []
@@ -62,7 +62,6 @@ class electroMKM:
         self.gr_string = global_reaction_string
         self.gr_dict = dict(zip(global_reaction_label, global_reaction_string))
         # Convention: global and elementary reaction are separated by 3 blank lines in rm.mkm
-        self.NR = len(lines) - self.NGR - 3  # Number of elementary steps
         reaction_type_list = []
         species_label = []
         species_sur_label = []
@@ -185,8 +184,7 @@ class electroMKM:
         ###########################################################################
         # g.mkm -> System energetics (H, S, G)
         ###########################################################################
-        e = open('./{}'.format(g_input_file), 'r')
-        lines = e.readlines()
+        lines = preprocess('./{}'.format(g_input_file), 6)
         for i in range(len(lines)): 
             lines[i] = lines[i].strip("\n")
         E_ts = lines[:self.NR]
@@ -670,4 +668,4 @@ class electroMKM:
         plt.ylabel("log10(|j|)")
         plt.grid()
         plt.show()            
-        return "Tafel slope = {} V-1    alfa = {}".format(tafel_slope, alfa)     
+        return "Tafel slope = {} V    alfa = {}".format(tafel_slope, alfa)     
