@@ -1,11 +1,10 @@
-"""Module providing the interface for the reactor models for microkinetic modeling."""
+"""Module providing the interface for the reactor models for pymkm."""
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from constants import *
 from functions import *
-from abc import ABC
 import numpy as np
-import math
+from math import pi
 
 class ReactorModel(ABC):
     def __init__(self):
@@ -33,7 +32,7 @@ class ReactorModel(ABC):
     @abstractmethod
     def termination_event(self):
         """
-        Provides the criteria needed to stop the integration. Typically,
+        Defines the criteria needed to stop the integration. Typically,
         the termination occurs when steady-state conditions are reached.
         """
         ...
@@ -43,21 +42,24 @@ class ReactorModel(ABC):
         """
         Provides the conversion of reactant i.        
         """
+        ...
 
     @abstractmethod
     def selectivity(self):
         """
         Provides the selectivity of reactant i towards product j.
         """
+        ...
 
     @abstractmethod
-    def yyield(self):
+    def reaction_rate(self):
         """
-        Provides the yield of reactant i towards product j.
+        Provides the production rate of the specific species.
         """
+        ...
 
 class DifferentialPFR(ReactorModel):
-    def __init__(self):
+    def __init__(self, ss_tol=1e-10):
         """
         Reactor model: Differential Plug-Flow Reactor (PFR)
         Main assumptions:
@@ -65,7 +67,8 @@ class DifferentialPFR(ReactorModel):
             - Zero-conversion model
             - Isothermal, isobaric        
         """
-        pass
+        self.reactor_type = "Differential PFR"
+        self.ss_tol = ss_tol
 
     def ode(self, time, y, kd, ki, v_matrix, NC_sur):
         # Surface species
@@ -103,30 +106,34 @@ class DifferentialPFR(ReactorModel):
         return J
 
     def termination_event(self, time, y, kd, ki, v_matrix, NC_sur):
-        return np.sum(abs(self.ode(time, y, kd, ki, v_matrix, NC_sur)))
+        error = np.sum(abs(self.ode(time, y, kd, ki, v_matrix, NC_sur)))
+        criteria = 0 if error <= self.ss_tol else error
+        return criteria
     termination_event.terminal = True
 
-    def conversion(self, gas_reactant_index):
-        return 0.0
+    def conversion(self, P_in, P_out):
+        return 1 - (P_out / P_in)
 
-    def selectivity(self, gas_reactant_index, product_reactant_index):
-        S = 0.0
-        return S
+    def selectivity(self, r_target, r_tot):
+        return r_target / r_tot
 
-    def yyield(self, gas_reactant_index, product_reactant_index):
-        X = self.conversion(gas_reactant_index)
-        S = self.selectivity(gas_reactant_index, product_reactant_index)
-        return X * S    
+    def reaction_rate(self):
+        pass
+
+    def yyield(self, P_in, P_out, r_target, r_tot):
+        X = self.conversion(P_in, P_out)
+        S = self.selectivity(r_target, r_tot)
+        return X * S   
 
 class DynamicCSTR(ReactorModel):
     def __init__(self, radius=0.01, length=0.01, Q=1e-6, m_cat=1e-3, s_bet=1e5, a_site=1e-19, ss_tol=1e-5):
         """
         Reactor model: Dynamic Continuous Stirred Tank Reactor (CSTR)
         Main assumptions:
-            - isothermal, isobaric
-            - dynamic behaviour to reach steady state (target) with ODE solver
-            - finite volume (vs differential)
-            - perfect mixing
+            - Isothermal, isobaric
+            - Dynamic behaviour to reach steady state (target) with ODE solver
+            - Finite volume
+            - Perfect mixing
         Args:
             radius(float): Radius of the tubular reactor [m]
             length(float): Axial length of the tubular reactor [m]
@@ -137,19 +144,20 @@ class DynamicCSTR(ReactorModel):
             ss_tol(float): Tolerance parameter for controlling automatic stop when
                            steady-state conditions are reached by the solver.
         """
+        self.reactor_type = "Dynamic CSTR"
         self.radius = radius
         self.length = length
-        self.volume = (math.pi * radius **2) * length
+        self.volume = (pi * radius **2) * length
         self.Q = Q
         self.tau = self.volume / self.Q
         self.m_cat = m_cat
         self.s_bet = s_bet
         self.a_site = a_site
-        self.steady_state_tol = ss_tol
+        self.ss_tol = ss_tol
 
     def ode(self, time, y, kd, ki, v_matrix, NC_sur, temperature, P_in):
         # Surface species
-        dy = v_matrix @ net_rate(y, kd, ki)
+        dy = v_matrix @ net_rate(y, kd, ki, v_matrix)
         # Gas species
         dy[NC_sur:] *= (R * temperature / (N_AV * self.volume))
         dy[NC_sur:] *= (self.s_bet * self.m_cat / self.a_site)
@@ -188,7 +196,9 @@ class DynamicCSTR(ReactorModel):
         return J
 
     def termination_event(self, time, y, kd, ki, v_matrix, NC_sur, temperature, P_in):
-        return np.sum(abs(self.ode(time, y, kd, ki, v_matrix, NC_sur, temperature, P_in)))
+        error = np.sum(abs(self.ode(time, y, kd, ki, v_matrix, NC_sur, temperature, P_in)))
+        criteria = 0 if error <= self.ss_tol else error
+        return criteria
     termination_event.terminal = True
 
     def conversion(self, gas_reactant_index, P_in, P_out):

@@ -25,14 +25,21 @@ def preprocess(input_file, ws=3):
             index_first = i
             break
     new_lines = new_lines[index_first:]
+    print(new_lines)
     counter = 0
-    index_last = len(new_lines)
-    for i in range(index_last -1):
+    ll = len(new_lines)
+    for i in range(len(new_lines)):
         if new_lines[i] == '':
             counter += 1
+        else:
+            pass
         if counter > ws:
-            index_last = i -1
-        new_lines = new_lines[:index_last+1]
+            index_last = i
+            break
+        else:
+            index_last = ll
+    new_lines = new_lines[:index_last]
+    print(new_lines)
     return new_lines
 
 def get_NGR_NR(input_list):
