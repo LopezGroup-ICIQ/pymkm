@@ -386,10 +386,6 @@ class electroMKM:
         for reaction in range(self.NR):
             Keq[reaction] = np.exp(-self.dg_reaction[reaction] / (temperature * K_B))
             if self.reaction_type[reaction] == 'ads':
-                #A = area_active_site / \
-                #    (2 * np.pi * self.m[reaction] * K_BU * temperature) ** 0.5
-                #kd[reaction] = A * \
-                #    np.exp(-self.dg_barrier[reaction] / K_B / temperature)
                 kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
             elif self.reaction_type[reaction] == 'des':
@@ -610,7 +606,7 @@ class electroMKM:
             print('{} Selectivity: {:.2f}%'.format(self.target_label,
                                                    s_target_sr*100.0))
             print('Most Abundant Surface Intermediate: {} Coverage: {:.2f}% '.format(
-                key_masi, value_masi))
+                key_masi, value_masi*100.0))
             print('CPU time: {:.2f} s'.format(time.time() - t0))
         return output_dict
 
@@ -640,6 +636,10 @@ class electroMKM:
         j_vector = np.zeros(len(overpotential_vector))
         if reaction_label not in self.grl.keys():
             raise ValueError("Unexisting reaction label")
+        print("{}: Tafel slope experiment for {}".format(self.name, reaction_label))
+        print("Temperature: {} K    Pressure: {} bar    pH: {}".format(temperature, int(pressure/1e5), pH))
+        print("")
+        time0 = time.time()
         for i in range(len(overpotential_vector)):
             exp.append(self.kinetic_run(overpotential_vector[i],
                                            pH,
@@ -647,25 +647,32 @@ class electroMKM:
                                            temperature=temperature,
                                            pressure=pressure,
                                            gas_composition=gas_composition,
-                                           verbose=verbose,
+                                           verbose=1,
                                            jac=jac))
             j_vector[i] = exp[i]['j_{}'.format(reaction_label)]
-            print("--------------------------------------------")
+            if overpotential_vector[i] < 0:
+                print("Overpotential = {} V    {} Current Density = {:.2e} mA cm-2".format(overpotential_vector[i],
+                                                                                           reaction_label,
+                                                                                           j_vector[i]/10))
+            else:
+                print("Overpotential = +{} V    {} Current Density = {:.2e} mA cm-2".format(overpotential_vector[i],
+                                                                                           reaction_label,
+                                                                                           j_vector[i]/10))
+        print("------------------------------------------------------------------")
         tafel_slope = calc_tafel_slope(overpotential_vector, j_vector)[0]
         f = F / R / temperature
         alfa = 1 + (tafel_slope / f) # Global charge transfer coefficient
-        fig = plt.figure(1, figsize=(6,4), dpi=300)
-        plt.subplot(2, 1, 1)
-        plt.plot(overpotential_vector, j_vector)
-        plt.xlabel("Overpotential / V vs SHE")
-        plt.plot("j / mA cm-2")
-        plt.title("Current density vs U")
-        plt.grid()
-        plt.subplot(2, 1, 2)
-        plt.plot(overpotential_vector, np.log10(abs(j_vector)))
-        plt.title("{}: Tafel plot".format(self.name))
-        plt.xlabel("Overpotential / V vs SHE")
-        plt.ylabel("log10(|j|)")
-        plt.grid()
-        plt.show()            
-        return "Tafel slope = {} V    alfa = {}".format(tafel_slope, alfa)     
+        print("Tafel slope = {:.2f} V    alfa = {:.2f}".format(tafel_slope, alfa))
+        print("CPU time: {:.2f} s".format(time.time() - time0)) 
+        fig, ax = plt.subplots(2, figsize=(7,5), dpi=400)
+        ax[0].plot(overpotential_vector, j_vector/10, 'ok', linewidth=4)
+        ax[0].set(xlabel="Overpotential / V vs SHE", ylabel="j / mA cm-2", title="j vs U")
+        ax[0].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+        ax[0].grid()
+        ax[1].plot(overpotential_vector, np.log10(abs(j_vector)), 'ok')
+        ax[1].set(title="{}: Tafel plot".format(self.name), xlabel="Overpotential / V vs SHE", ylabel="log10(|j|)")
+        ax[1].grid()
+        plt.tight_layout()
+        plt.show()
+        plt.savefig("{}_tafel.svg".format(self.name))            
+        return tafel_slope     

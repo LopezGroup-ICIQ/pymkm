@@ -25,7 +25,6 @@ def preprocess(input_file, ws=3):
             index_first = i
             break
     new_lines = new_lines[index_first:]
-    print(new_lines)
     counter = 0
     ll = len(new_lines)
     for i in range(len(new_lines)):
@@ -39,7 +38,6 @@ def preprocess(input_file, ws=3):
         else:
             index_last = ll
     new_lines = new_lines[:index_last]
-    print(new_lines)
     return new_lines
 
 def get_NGR_NR(input_list):
