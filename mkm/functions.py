@@ -1,6 +1,7 @@
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from constants import *
+from rm_parser import stoic_forward, stoic_backward
 
 def kinetic_coeff(NR, dg_reaction, dg_barrier, temperature, reaction_type, m, a_site=1e-19):
         """
@@ -40,7 +41,7 @@ def kinetic_coeff(NR, dg_reaction, dg_barrier, temperature, reaction_type, m, a_
                 kr[reaction] = kd[reaction] / Keq[reaction]
         return kd, kr
 
-def net_rate(y, kd, kr, v_matrix):
+def net_rate(y, kd, ki, v_matrix):
     """
     Returns the net reaction rate for each elementary reaction.
     Args:
@@ -53,7 +54,7 @@ def net_rate(y, kd, kr, v_matrix):
     net_rate = np.zeros(len(kd))
     v_ff = stoic_forward(v_matrix)
     v_bb = stoic_backward(v_matrix)
-    net_rate = kd * np.prod(y ** v_ff.T, axis=1) - kr * np.prod(y ** v_bb.T, axis=1)
+    net_rate = kd * np.prod(y ** v_ff.T, axis=1) - ki * np.prod(y ** v_bb.T, axis=1)
     return net_rate
     
 def z_calc(y, kd, kr, v_f, v_b):
@@ -108,36 +109,5 @@ def calc_reac_order(partial_pressure, reaction_rate):
     R2 = reg.score(x, y)
     return napp, R2
 
-def stoic_forward(matrix):
-    """
-    Filter function for the stoichiometric matrix.
-    Negative elements are considered and changed of sign in order to 
-    compute the direct reaction rates.
-    Args:
-        matrix(ndarray): Stoichiometric matrix
-    Returns:
-        mat(ndarray): Filtered matrix for constructing forward reaction rates.
-    """
-    mat = np.zeros([matrix.shape[0], matrix.shape[1]])
-    for i in range(mat.shape[0]):
-        for j in range(mat.shape[1]):
-            if matrix[i][j] < 0:
-                mat[i][j] = - matrix[i][j]
-    return mat
 
-def stoic_backward(matrix):
-    """
-    Filter function for the stoichiometric matrix.
-    Positive elements are considered and kept in order to compute 
-    the reverse reaction rates.
-    Args: 
-        matrix(ndarray): stoichiometric matrix
-    Returns:
-        mat(ndarray): Filtered matrix for constructing reverse reaction rates.
-    """
-    mat = np.zeros([matrix.shape[0], matrix.shape[1]])
-    for i in range(mat.shape[0]):
-        for j in range(mat.shape[1]):
-            if matrix[i][j] > 0:
-                mat[i][j] = matrix[i][j]
-    return mat
+

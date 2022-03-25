@@ -6,12 +6,12 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
-from natsort import natsorted
 from thermo import k_eq_H, k_eq_S, reaction_enthalpy, reaction_entropy
 from constants import *
 from functions import *
 from reactor import *
-from parser import preprocess, get_NGR_NR
+from rm_parser import *
+from g_parser import *
 import graphviz
 
 reactor_dict = {"differential" : DifferentialPFR(), "dynamic": DynamicCSTR()}
@@ -35,163 +35,47 @@ class MKM:
                  rm_input,
                  g_input,
                  t_ref=273.15,
-                 reactor='differential',
                  inerts=[]):
         self.name = name
-        self.input_rm = rm_input
-        self.input_g = g_input
         self.t_ref = t_ref
-        self.reactor_model = reactor
-        self.reactor = reactor_dict[reactor]
+        self.reactor_model = "differential"
+        self.reactor = reactor_dict["differential"]
         self.inerts = inerts
-        ############################################################################
-        # rm.mkm parsing -> Global reactions, Stoichiometric matrix, Species 
-        ############################################################################
-        lines = preprocess(rm_input)
-        self.NGR, self.NR = get_NGR_NR(lines)
-        global_reaction_label = []
-        global_reaction_index = []
-        global_reaction_string = []
-        for reaction in range(self.NGR):
-            global_reaction_label.append(lines[reaction].split()[0])
-            global_reaction_index.append(int(lines[reaction].split()[1][:-1]))
-            global_reaction_string.append(
-                " ".join(lines[reaction].split()[2:]))
+        # rm.mkm parsing -> Reaction mechanism
+        rm_lines = preprocess_rm(rm_input)
+        self.NGR, self.NR = get_NGR_NR(rm_lines)  # Number of global (NGR) and elementary (NR) reactions
+        self.r = ['R{}'.format(i+1) for i in range(self.NR)]
+        self.ngr = ['GR{}'.format(i+1) for i in range(self.NGR)]
+        global_reaction_label = [rm_lines[reaction].split()[0] for reaction in range(self.NGR)]
+        global_reaction_index = [int(rm_lines[reaction].split()[1][:-1]) for reaction in range(self.NGR)]
+        self.gr_string = [" ".join(rm_lines[reaction].split()[2:]) for reaction in range(self.NGR)]
         self.target = global_reaction_index[0]
-        self.target_label = global_reaction_label[0]
-        self.by_products = global_reaction_index[1:]
-        self.by_products_label = global_reaction_label[1:]
-        self.grl = dict(zip(global_reaction_label, global_reaction_index))
-        self.gr_string = global_reaction_string
-        self.gr_dict = dict(zip(global_reaction_label, global_reaction_string))
-        reaction_type_list = []
-        species_label = []
-        species_sur_label = []
-        species_gas_label = []
-        for reaction in range(self.NR):
-            line_list = lines[reaction + 3 + self.NGR].split()
-            arrow_index = line_list.index('->')
-            try:  # Extraction of reaction type
-                gas_index = line_list.index(
-                    [element for idx, element in enumerate(line_list) if '(g)' in element][0])
-            except IndexError:
-                reaction_type_list.append('sur')  # Surface reaction
-            else:
-                if gas_index < arrow_index:
-                    reaction_type_list.append('ads')  # Adsorption
-                else:
-                    reaction_type_list.append('des')  # Desorption
-            for element in line_list:  # Extraction of all species
-                if (element == '+') or (element == '->'):
-                    pass
-                elif (element[0] in {'2', '3', '4'}):
-                    element = element[1:]
-                    if element in species_label:
-                        pass
-                    else:
-                        species_label.append(element)
-                elif element in species_label:
-                    pass
-                else:
-                    species_label.append(element)
-
-        if inerts != None:
-            for i in inerts:
-                species_label.append(i+'(g)')
-        v_matrix = np.zeros((len(species_label), self.NR))
-
-        for element in species_label:  # Classification of species (sur/gas)
-            if '(g)' in element:
-                species_gas_label.append(element)
-            else:
-                species_sur_label.append(element)
-
-        species_sur_label = natsorted(species_sur_label)
-        species_label = species_sur_label + species_gas_label
-
-        for reaction in range(self.NR):  # Construction of stoichiometric matrix
-            line = lines[self.NGR + 3 + reaction].split()
-            arrow_index = line.index('->')
-            for species in range(len(species_label)):
-                if species_label[species] in line:
-                    species_index = line.index(species_label[species])
-                    if species_index < arrow_index:
-                        v_matrix[species, reaction] = -1
-                    else:
-                        v_matrix[species, reaction] = 1
-                elif '2' + species_label[species] in line:
-                    species_index = line.index('2' + species_label[species])
-                    if species_index < arrow_index:
-                        v_matrix[species, reaction] = -2
-                    else:
-                        v_matrix[species, reaction] = 2
-        ###########################################################################
-        self.NC_sur = len(species_sur_label)     # Number of surface species
-        self.NC_gas = len(species_gas_label)     # Number of gaseous species
-        self.NC_tot = self.NC_sur + self.NC_gas  # Total number of species
-        self.v_matrix = v_matrix.astype(int)     # Stoichiometric matrix
-        self.species_sur = species_sur_label     # List of surface intermediates labels
-        self.species_gas = species_gas_label     # List of gaseous species labels
-        self.species_tot = self.species_sur + self.species_gas  # List of all species
-        # List with description of each elementary step
-        self.reaction_type = reaction_type_list
-        self.masses = []
-        for i in self.species_gas:
-            mw = 0.0
-            MWW = []
-            i = i.strip('(g)')
-            for j in range(len(i)):
-                if j != (len(i)-1):
-                    if i[j+1].islower():  # next char is lower case (example: Br, Ar)
-                        x = i[j:j+2][0] + i[j:j+2][1]
-                        MWW.append(x)
-                    else:
-                        if i[j] in int_set:  # CH3, NH2
-                            for k in range(int(i[j]) - 1):
-                                MWW.append(MWW[-1])
-                        elif i[j].islower():
-                            pass
-                        else:
-                            MWW.append(i[j])
-                else:  # last string char
-                    if i[j] in int_set:  # CH3
-                        for k in range(int(i[j]) - 1):
-                            MWW.append(MWW[-1])
-                    elif i[j].islower():  # CH3Br
-                        pass
-                    else:  # H3N
-                        MWW.append(i[j])
-            for i in MWW:
-                mw += m_dict[i]
-            self.masses.append(mw)
-        self.MW = dict(zip(self.species_gas, self.masses))
-        # ---------------------------------------------------------------------------------
-        self.m = [0]*self.NR   # List needed for adsorption kinetic constants
-        for i in range(self.NR):
-            if self.reaction_type[i] == 'sur':
-                pass
-            else:
-                for j in range(self.NC_gas):
-                    if self.v_matrix[self.NC_sur+j, i] == 0:
-                        pass
-                    else:
-                        self.m[i] = self.masses[j] / (N_AV*1000)
-        ###########################################################################
-        # g.mkm parsing -> System energetics (H, S and G)
-        ###########################################################################
-        lines = preprocess("./{}".format(g_input), 6)
-        E_ts = lines[:self.NR]
-        E_species = [i for i in lines[self.NR+3:] if i != ""]
+        self.target_label = global_reaction_label[0]                        # ex: MeOH
+        self.by_products = global_reaction_index[1:]                        
+        self.by_products_label = global_reaction_label[1:]                  # ex: RWGS
+        self.grl = dict(zip(global_reaction_label, global_reaction_index))  # ex: "MeOH": 15
+        self.gr_dict = dict(zip(global_reaction_label, self.gr_string))     # ex: "MeOH": "CO2 + 3H2 -> CH3OH + H2O"
+        self.reaction_type = reaction_type(rm_lines, self.NR, self.NGR)
+        self.species_sur, self.species_gas, self.species_tot = classify_species(get_species_label(rm_lines, self.NGR, inerts))
+        self.NC_sur, self.NC_gas, self.NC_tot = get_NC(self.species_sur, self.species_gas)      
+        self.v_matrix = stoich_matrix(rm_lines, self.NR, self.NGR, self.species_tot)            
+        self.v_f = stoic_forward(self.v_matrix)
+        self.v_b = stoic_backward(self.v_matrix)        
+        self.MW = gas_MW(self.species_gas)                                                      
+        self.m = ads_mass(self.v_matrix, self.reaction_type, self.NC_sur, list(self.MW.values()))
+        self.v_global = global_v_matrix(self.NC_tot, self.NGR, self.gr_string, self.species_tot, self.NC_sur, self.species_gas)
+        # Stoichiometric vector for global_reactions (NR x NGR)
+        self.stoich_numbers = stoich_numbers(self.NR, self.NGR, self.v_matrix, self.v_global)
+        # g.mkm parsing -> Energetics
+        g_lines = preprocess_g(g_input)
+        E_ts = g_lines[:self.NR]
+        E_species = [line for line in g_lines[self.NR+3:] if line != ""]
         H_ts = np.zeros(self.NR)
         S_ts = np.zeros(self.NR) 
         H_species = np.zeros(self.NC_tot)
         S_species = np.zeros(self.NC_tot)
-        keys_R = []
-        keys_species = []
-        for j in range(len(E_ts)):
-            keys_R.append(E_ts[j].split()[0])
-        for j in range(len(E_species)):
-            keys_species.append(E_species[j].split()[0].strip(':'))
+        keys_R = [E_ts[i].split()[0] for i in range(len(E_ts))]
+        keys_species = [E_species[j].split()[0].strip(':') for j in range(len(E_species))]
         for i in range(self.NR):
             index = keys_R.index('R{}:'.format(i+1))
             H_ts[i] = float(E_ts[index].split()[1])
@@ -210,40 +94,7 @@ class MKM:
         self.h_ts = H_ts
         self.s_ts = S_ts
         self.g_ts = H_ts - t_ref * S_ts
-        ###########################################################################
-        # Convert global reaction string to stoichiometric vectors
-        self.v_global = np.zeros((self.NC_tot, self.NGR))
-        for i in range(self.NC_tot):
-            for j in range(self.NGR):
-                reaction_list = self.gr_string[j].split()
-                arrow_index = reaction_list.index('->')
-                if self.species_tot[i].strip('(g)') in reaction_list:
-                    if reaction_list.index(self.species_tot[i].strip('(g)')) < arrow_index:
-                        self.v_global[i, j] = -1
-                    else:
-                        self.v_global[i, j] = 1
-                else:
-                    if '2'+self.species_tot[i].strip('(g)') in reaction_list:
-                        if reaction_list.index('2'+self.species_tot[i].strip('(g)')) < arrow_index:
-                            self.v_global[i, j] = -2
-                        else:
-                            self.v_global[i, j] = 2
-                    elif '3'+self.species_tot[i].strip('(g)') in reaction_list:
-                        if reaction_list.index('3'+self.species_tot[i].strip('(g)')) < arrow_index:
-                            self.v_global[i, j] = -3
-                        else:
-                            self.v_global[i, j] = 3
-        for i in range(self.NC_tot):
-            for j in range(self.NGR):
-                if (i < self.NC_sur) and (self.species_tot[i]+'(g)' in self.species_gas):
-                    self.v_global[i, j] = 0
-        #############################################################################
-        # stoichiometric vector for global_reactions
-        self.stoich_numbers = np.zeros((self.NR, self.NGR))
-        for i in range(self.NGR):
-            sol = np.linalg.lstsq(
-                self.v_matrix, self.v_global[:, i], rcond=None)
-            self.stoich_numbers[:, i] = np.round(sol[0], decimals=2)
+
         self.dh_reaction = np.zeros(self.NR)
         self.ds_reaction = np.zeros(self.NR)
         self.dg_reaction = np.zeros(self.NR)
@@ -295,22 +146,16 @@ class MKM:
                     self.ds_barrier_rev[i] = 0.0
                     self.dg_barrier[i] = self.dg_reaction[i]
                     self.dg_barrier_rev[i] = 0.0
-        self.ODE_params = [1e-12, 1e-70, 1e3]
-        self.v_f = stoic_forward(self.v_matrix)
-        self.v_b = stoic_backward(self.v_matrix)
-        self.r = ['R{}'.format(i+1) for i in range(self.NR)]
-        self.df_system = pd.DataFrame(self.v_matrix, index=species_sur_label+species_gas_label,
-                                      columns=[self.r, reaction_type_list])
+
+        self.ODE_params = {'reltol': 1e-12, "abstol": 1e-64, "tfin": 1e3}
+        self.df_system = pd.DataFrame(self.v_matrix, index=self.species_tot,
+                                      columns=[self.r, self.reaction_type])
         self.df_system.index.name = 'species'
-        self.df_gibbs = pd.DataFrame(np.array([self.dg_reaction,
-                                               self.dg_barrier,
-                                               self.dg_barrier_rev]).T,
-                                     index=[self.r, reaction_type_list],
-                                     columns=['DGR / eV',
-                                              'DG barrier / eV',
-                                              'DG reverse barrier / eV'])
+        self.df_gibbs = pd.DataFrame(np.array([self.dg_reaction, self.dg_barrier, self.dg_barrier_rev]).T,
+                                     index=[self.r, self.reaction_type],
+                                     columns=['DGR / eV', 'G_act / eV', 'G_act,rev / eV']).round(2)
         self.df_gibbs.index.name = 'reaction'
-#-------------------------------------------------------------------------------------------------------------#
+
     def set_reactor(self, reactor="differential"):
         """
         Define the reactor model. 
@@ -364,19 +209,19 @@ class MKM:
             reltol(float): relative tolerance. Default to 1e-12.
             abstol(float): absolute tolerance. Default to 1e-64.
         """
-        self.ODE_params[0] = reltol
-        self.ODE_params[1] = abstol
-        self.ODE_params[2] = t_final
-        print("Integration time = {}s".format(t_final))
+        self.ODE_params["reltol"] = reltol
+        self.ODE_params["abstol"] = abstol
+        self.ODE_params["tfin"] = t_final
+        print("Integration time = {} s".format(t_final))
         print("Relative tolerance = {}".format(reltol))
         print("Absolute tolerance = {}".format(abstol))
         return "Changed ODE parameters."
 
     def get_ODE_params(self):
         """Print ODE parameters used in scipy solver solve_ivp."""
-        print("Integration time = {}s".format(self.ODE_params[2]))
-        print("Relative tolerance = {}".format(self.ODE_params[0]))
-        print("Absolute tolerance = {}".format(self.ODE_params[1]))
+        print("Integration time = {}s".format(self.ODE_params["tfin"]))
+        print("Relative tolerance = {}".format(self.ODE_params["reltol"]))
+        print("Absolute tolerance = {}".format(self.ODE_params["abstol"]))
         return None
 
     def __str__(self):
@@ -390,9 +235,6 @@ class MKM:
         print("Number of surface species: {}".format(self.NC_sur))
         print("Number of gas species: {}".format(self.NC_gas))
         return ""
-
-    def info(self):
-        print(self)
 
     @staticmethod
     def methods():
@@ -475,7 +317,7 @@ class MKM:
             keq_model[i] = keq_H_model[i] * keq_S_model[i]
             keq_database[i] = keq_H_database[i] * keq_S_database[i]
         print(" {}: Thermodynamic consistency analysis".format(self.name))
-        print(" Temperature = {}K".format(temperature))
+        print(" Temperature = {} K".format(temperature))
         print("")
         print("----------------------------------------------------------------------------------")
         for global_reaction in range(self.NGR):
@@ -525,12 +367,12 @@ class MKM:
                    initial_conditions=None,
                    verbose=0):
         """
-        Simulates a single catalytic run at the desired reaction conditions.        
+        Simulate a catalytic run at the defined operating conditions.        
         Args:
             temperature(float): Temperature of the experiment [K].
             pressure(float): Total abs. pressure of gaseous species [Pa].
             gas_composition(list): molar fraction of gas species [-].
-            initial_conditions(nparray): initial coverage of the catalyst surface [-].
+            initial_conditions(ndarray): initial fractional coverage of the catalyst surface [-].
             verbose(int): 0=print all output; 1=print nothing.        
         Returns:
             output_dict(dict): Report of the simulation.        
@@ -549,11 +391,14 @@ class MKM:
                 gas_string += i
             print(gas_string)
         y_0 = np.zeros(self.NC_tot)
-        if initial_conditions is None:  # Convention: first surface species is the active site
+        if initial_conditions is None:  # First surface species is the active site
             y_0[0] = 1.0
         else:
-            y_0[:self.NC_sur] = initial_conditions[:self.NC_sur]
-        y_0[self.NC_sur:] = pressure * np.array(gas_composition)
+            if sum([1 for i in initial_conditions if i < 0]) != 0:
+                raise ValueError("Fatal Error: at least one negative initial surface coverage.")
+            y_0[:self.NC_sur] = initial_conditions
+        y_0[self.NC_sur:] = pressure * np.array(gas_composition)       
+        
         if np.sum(y_0[:self.NC_sur]) != 1.0:
             raise ValueError('Fatal Error: the sum of the provided surface coverage is not equal 1.')
         if sum(gas_composition) != 1.0:
@@ -579,7 +424,7 @@ class MKM:
         t0 = time.time()
         results = self.__ode_solver_solve_ivp(y_0,
                                               self.reactor.ode,
-                                              *self.ODE_params,
+                                              *list(self.ODE_params.values()),
                                               ode_params,
                                               end_events=self.reactor.termination_event,
                                               jacobian_matrix=self.reactor.jacobian)
