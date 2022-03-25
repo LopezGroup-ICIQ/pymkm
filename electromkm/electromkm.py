@@ -527,17 +527,21 @@ class electroMKM:
             print('Overpotential = {}V vs SHE    pH = {}'.format(overpotential, pH))
             print('Temperature = {}K    Pressure = {:.1f}bar'.format(temperature, pressure/1e5))
         y_0 = np.zeros(self.NC_tot)
-        if initial_conditions is None:  # Convention: first surface species is the active site
-            y_0[0] = 1.0
-            indexH = self.species_tot.index("H(e)") 
+        indexH = self.species_tot.index("H(e)") 
+        if initial_conditions is None:  # First surface species is the active site
+            y_0[0] = 1.0 
             y_0[indexH] = 10 ** (-pH)
         else:
+            sum = np.sum(initial_conditions) - initial_conditions[indexH]
+            condition2 = True in [(initial_conditions[i] < 0.0) for i in range(len(initial_conditions))] 
+            if sum != 1.0 or condition2:
+                raise ValueError('Wrong initial conditions (surface coverages fractions\' sum must be equal to 1 and values >= 0)')
             y_0[:self.NC_sur] = initial_conditions[:self.NC_sur]
         if gas_composition is None:
             y_0[self.NC_sur:] = 0.0
         else:
             y_0[self.NC_sur:] = pressure * gas_composition
-        #-----------------------------------------------------------------------------------------------
+        #-----------------------------------------------------------------------------------------------        
         if temperature < 0.0:
             raise ValueError('Wrong temperature (T > 0 K)')
         if pressure < 0.0:
@@ -674,5 +678,5 @@ class electroMKM:
         ax[1].grid()
         plt.tight_layout()
         plt.show()
-        plt.savefig("{}_tafel.svg".format(self.name))            
+        plt.savefig("{}_tafel.png".format(self.name))            
         return tafel_slope     
