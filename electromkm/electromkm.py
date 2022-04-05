@@ -54,9 +54,9 @@ class electroMKM:
             global_reaction_index.append(int(lines[reaction].split()[1][:-1]))
             global_reaction_string.append(
                 " ".join(lines[reaction].split()[2:]))
-        self.target = global_reaction_index[0]
+        self.target = global_reaction_index[0] #First reaction is the target reaction
         self.target_label = global_reaction_label[0]
-        self.by_products = global_reaction_index[1:]
+        self.by_products = global_reaction_index[1:] #The rest are treated as reactions that lead to by-products
         self.by_products_label = global_reaction_label[1:]
         self.grl = dict(zip(global_reaction_label, global_reaction_index))
         self.gr_string = global_reaction_string
@@ -67,18 +67,19 @@ class electroMKM:
         species_sur_label = []
         species_gas_label = []
         charge_transfer_reactions = []
+        dl_transport = []
 
         for reaction in range(self.NR):
             line = lines[reaction + 3 + self.NGR]
             line_list = line.split()
-            arrow_index = line_list.index('->')
+            arrow_index = line_list.index('->') #find the index where the arrow is located
             try:  # Extraction of reaction type
                 gas_index = line_list.index(
                     [element for idx, element in enumerate(line_list) if '(g)' in element][0])
             except IndexError:
                 reaction_type_list.append('sur')  # Surface reaction
             else:
-                if gas_index < arrow_index:
+                if gas_index < arrow_index: #if index where gas is present is less than where the arrow is
                     reaction_type_list.append('ads')  # Adsorption
                 else:
                     reaction_type_list.append('des')  # Desorption
@@ -86,6 +87,11 @@ class electroMKM:
                 charge_transfer_reactions.append("R{}".format(reaction+1)) # Charge transfer steps
                 reaction_type_list[reaction] += "+e"
                 # check correctness of the redox balance
+            #if there is a double layer, the adsorption constant calc would be different
+            if "(dl)".format() in line:
+                dl_transport.append("R{}".format(reaction+1))
+                reaction_type_list[reaction] += "+dl"
+            #print(reaction_type_list)
             for element in line_list:  # Extraction of all species
                 if (element == '+') or (element == '->'):
                     pass
@@ -113,6 +119,7 @@ class electroMKM:
 
         species_sur_label = natsorted(species_sur_label)
         species_label = species_sur_label + species_gas_label
+        #print(species_label)
 
         for reaction in range(self.NR):  # Construction of stoichiometric matrix
             line = lines[self.NGR + 3 + reaction].split()
@@ -141,9 +148,13 @@ class electroMKM:
         # List with description of each elementary step
         self.reaction_type = reaction_type_list
         self.masses = []
+        self.diff = []
+        self.henrys = []
         for i in self.species_gas:
             mw = 0.0
             MWW = []
+            self.diff.append(D_gas_water[i])
+            self.henrys.append(k_H_water[i])
             i = i.strip('(g)')
             for j in range(len(i)):
                 if j != (len(i)-1):
@@ -166,14 +177,27 @@ class electroMKM:
                         pass
                     else:  # H3N
                         MWW.append(i[j])
+            #print(MWW)
             for i in MWW:
                 mw += m_dict[i]
             self.masses.append(mw)
-        self.MW = dict(zip(self.species_gas, self.masses))
+        self.MW = dict(zip(self.species_gas, self.masses)) # Molecular weight of all gases
         #----------------------------------------------------------------------------------
         self.m = [0]*self.NR   # List needed for adsorption kinetic constants
+        self.diff_rxn = [0]*self.NR
+        self.henrys_rxn = [0]*self.NR
+        
         for i in range(self.NR):
-            if self.reaction_type[i] == 'sur':
+            if self.reaction_type[i] == 'ads+dl':
+                for j in range(self.NC_gas):
+                    if self.v_matrix[self.NC_sur+j, i] == 0:
+                        pass
+                    else:
+                        self.diff_rxn[i] = self.diff[j]
+                        self.henrys_rxn[i] = self.henrys[j]
+                
+        for i in range(self.NR):
+            if self.reaction_type[i] == 'sur': #Ranga: What if it is surf + e and surf +dl and others 
                 pass
             else:
                 for j in range(self.NC_gas):
@@ -368,7 +392,7 @@ class electroMKM:
         print("Absolute tolerance = {}".format(abstol))
         return "Changed ODE solver parameters."
 
-    def kinetic_coeff(self, overpotential, temperature, area_active_site=1e-19):
+    def kinetic_coeff(self, overpotential, temperature=298, area_active_site=1e-19,length_diff=1e-5): # add length variable, like MW, probably add diffusion coefficient
         """
         Returns the kinetic coefficient for the direct and reverse reactions, according to 
         the reaction type (adsorption, desorption or surface reaction) and TST.
@@ -385,16 +409,26 @@ class electroMKM:
         kr = np.zeros(self.NR)   # Reverse constant
         for reaction in range(self.NR):
             Keq[reaction] = np.exp(-self.dg_reaction[reaction] / (temperature * K_B))
-            if self.reaction_type[reaction] == 'ads':
-                kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
+            if self.reaction_type[reaction] == 'ads' or self.reaction_type[reaction] == 'sur+dl':
+                kd[reaction] = (K_B * temperature / H ) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
-            elif self.reaction_type[reaction] == 'des':
+            elif self.reaction_type[reaction] == 'des' :
                 kd[reaction] = (K_B * temperature / H) * \
                     np.exp(-self.dg_barrier[reaction] / temperature / K_B)
-                kr[reaction] = kd[reaction] / Keq[reaction]
+                kr[reaction] = kd[reaction] / Keq[reaction] 
             elif self.reaction_type[reaction] == 'sur':  
                 kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
+            elif self.reaction_type[reaction] == 'ads+dl':
+                kd[reaction] = (self.diff_rxn[reaction]*area_active_site*self.henrys_rxn[reaction]*N_AV*1e5)/length_diff
+                kd[reaction] *=  np.exp(-self.dg_barrier[reaction]/ temperature / K_B)
+                kr[reaction] = kd[reaction] / Keq[reaction]
+                #print(kd[reaction])
+                #print(Keq[reaction])
+            #elif self.reaction_type[reaction] == 'sur+dl':
+            #    kd[reaction] = (K_B * temperature / H ) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
+            #    kr[reaction] = kd[reaction] / Keq[reaction]
+            #    print(kd[reaction])
             else: # Charge transfer reaction
                 f = F / (R * temperature)  # C/J
                 index = self.species_tot.index('H(e)')
@@ -436,7 +470,7 @@ class electroMKM:
         dy[self.NC_sur:] = 0.0
         # H+ activity is constant, defined by pH
         index = self.species_tot.index('H(e)')
-        dy[index] = 0.0 
+        dy[index] = 0.0 #Is this where you excluding H(e) from the calc
         return dy
 
     def jac_diff(self, time, y, kd, ki):
@@ -476,8 +510,10 @@ class electroMKM:
     def __ode_solver_solve_ivp(self,
                                y_0,
                                dy,
-                               temperature, 
+                               temperature,
                                overpotential, 
+                               area_active_site,
+                               length_diff,
                                reltol,
                                abstol,
                                t_final,
@@ -487,7 +523,7 @@ class electroMKM:
         Helper function for solve_ivp integrator.
         """
         kd, ki = self.kinetic_coeff(overpotential, 
-                                    temperature)
+                                    temperature,area_active_site,length_diff)
         args_list = [kd, ki]
         r = solve_ivp(dy,
                       (0.0, t_final),
@@ -508,6 +544,8 @@ class electroMKM:
                     temperature=298.0,
                     pressure=1e5,
                     gas_composition=None,
+                    area_active_site=1e-19,
+                    length_diff=1e-5,
                     verbose=0,
                     jac=False):
         """
@@ -527,21 +565,21 @@ class electroMKM:
             print('Overpotential = {}V vs SHE    pH = {}'.format(overpotential, pH))
             print('Temperature = {}K    Pressure = {:.1f}bar'.format(temperature, pressure/1e5))
         y_0 = np.zeros(self.NC_tot)
-        indexH = self.species_tot.index("H(e)") 
-        if initial_conditions is None:  # First surface species is the active site
-            y_0[0] = 1.0 
+        if initial_conditions is None:  # Convention: first surface species is the active site
+            y_0[0] = 1.0
+            indexH = self.species_tot.index("H(e)")
+            indexdl = [idx for idx, s in enumerate(self.species_tot) if 'dl' in s][0]
+            #print(indexdl)
             y_0[indexH] = 10 ** (-pH)
+            y_0[indexdl] = pressure/1e5 #Need to change this to partial pressure
         else:
-            sum = np.sum(initial_conditions) - initial_conditions[indexH]
-            condition2 = True in [(initial_conditions[i] < 0.0) for i in range(len(initial_conditions))] 
-            if sum != 1.0 or condition2:
-                raise ValueError('Wrong initial conditions (surface coverages fractions\' sum must be equal to 1 and values >= 0)')
             y_0[:self.NC_sur] = initial_conditions[:self.NC_sur]
         if gas_composition is None:
             y_0[self.NC_sur:] = 0.0
         else:
-            y_0[self.NC_sur:] = pressure * gas_composition
-        #-----------------------------------------------------------------------------------------------        
+            y_0[self.NC_sur:] = pressure * gas_composition / 1e5
+        #print(y_0)
+        #-----------------------------------------------------------------------------------------------
         if temperature < 0.0:
             raise ValueError('Wrong temperature (T > 0 K)')
         if pressure < 0.0:
@@ -574,17 +612,19 @@ class electroMKM:
                                                  self.differential_pfr,
                                                  temperature,
                                                  overpotential,
+                                                 area_active_site,
+                                                 length_diff,
                                                  *self.ODE_params,
                                                  end_events=None,
                                                  jacobian_matrix=_)
         final_sr = self.differential_pfr(results_sr.t[-1],
                                          results_sr.y[:, -1],
                                          *self.kinetic_coeff(overpotential,
-                                                             temperature))
+                                                             temperature,area_active_site,length_diff))
         yfin_sr = results_sr.y[:self.NC_sur, -1]
         r_sr = self.net_rate(results_sr.y[:, -1],
                             *self.kinetic_coeff(overpotential,
-                                                temperature))
+                                                temperature,area_active_site,length_diff))
         j_sr = -r_sr * F / (N_AV * 1.0E-19)
         bp = list(set(self.by_products))
         s_target_sr = r_sr[self.target] / (r_sr[self.target] + r_sr[bp].sum())
@@ -666,7 +706,7 @@ class electroMKM:
         tafel_slope = calc_tafel_slope(overpotential_vector, j_vector)[0]
         f = F / R / temperature
         alfa = 1 + (tafel_slope / f) # Global charge transfer coefficient
-        print("Tafel slope = {:.2f} V    alfa = {:.2f}".format(tafel_slope, alfa))
+        print("Tafel slope = {:.2f} mV    alfa = {:.2f}".format(tafel_slope*1000, alfa))
         print("CPU time: {:.2f} s".format(time.time() - time0)) 
         fig, ax = plt.subplots(2, figsize=(7,5), dpi=400)
         ax[0].plot(overpotential_vector, j_vector/10, 'ok', linewidth=4)
@@ -678,5 +718,272 @@ class electroMKM:
         ax[1].grid()
         plt.tight_layout()
         plt.show()
-        plt.savefig("{}_tafel.png".format(self.name))            
-        return tafel_slope     
+        plt.savefig("{}_tafel.svg".format(self.name))            
+        return tafel_slope   
+    
+    def degree_of_rate_control(self,
+                               global_reaction_label,
+                               ts_int_label,
+                               overpotential,
+                               pH,
+                               initial_conditions=None,
+                               temperature=298.0,
+                               pressure=1e5,
+                               gas_composition=None,
+                               dg=1.0E-6,
+                               jac=False,
+                               verbose=0):
+        """
+        Calculates the degree of rate control(DRC) and selectivity control(DSC)
+        for the selected transition state or intermediate species.
+        Args:
+            temperature(float): Temperature of the experiment [K]
+            pressure(float): Partial pressure of the gaseous species [Pa]
+            gas_composition(list): Molar fraction of the gaseous species [-]
+            global_reaction_label(str): Global reaction for which DRC/DSC are computed
+            ts_int_label(str): Transition state/surface intermediate for which DRC/DSC are computed
+            initial_conditions(nparray): Initial surface coverage [-]
+            dg(float): Deviation applied to selected Gibbs energy to calculate the DRC/DSC values.
+                       Default=1E-6 eV
+            verbose(int): 1= Print essential info
+                          0= Print additional info
+        Returns:
+            List with DRC and DSC of TS/intermediate for the selected reaction [-]
+        """
+        if (global_reaction_label != self.target_label) and (global_reaction_label not in self.by_products_label):
+            raise Exception(
+                'Reaction label must be related to a global reaction!')
+        switch_ts_int = 0  # 0=TS 1=intermediate species
+        if 'R' not in ts_int_label:
+            switch_ts_int = 1
+        index = 0
+        if switch_ts_int == 0:
+            index = int(ts_int_label[1:]) - 1
+        else:
+            index = self.species_sur.index(ts_int_label)
+
+        if verbose == 0:
+            if switch_ts_int == 0:
+                print('{}: DRC analysis for elementary reaction R{} wrt {} reaction'.format(self.name,
+                                                                                            index+1,
+                                                                                            global_reaction_label))
+            else:
+                print('{}: DRC and DSC for intermediate {} wrt {} reaction'.format(self.name,
+                                                                                   self.species_sur[index],
+                                                                                   global_reaction_label))
+            print('Temperature = {}K    Pressure = {:.1f}bar'.format(
+                temperature, pressure/1e5))
+            sgas = []
+            for i in self.species_gas:
+                sgas.append(i.strip('(g)'))
+            str_list = ['{}={:.1f}%  '.format(i, j) for i, j in zip(sgas,
+                                                                    list(np.array(gas_composition)*100.0))]
+            gas_string = 'Gas composition: '
+            for i in str_list:
+                gas_string += i
+            print(gas_string)
+            print('')
+        r = np.zeros(2)
+        s = np.zeros(2)
+        if switch_ts_int == 0:    # Transition state
+            if self.g_ts[index] != 0.0:  # Originally activated reaction
+                for i in range(2):
+                    mk_object = electroMKM('i',
+                                    self.input_rm,
+                                    self.input_g,
+                                    t_ref=self.t_ref,
+                                    reactor=self.reactor_model,
+                                    inerts=self.inerts)
+                    mk_object.dg_barrier[index] += dg*(-1)**(i)
+                    mk_object.dg_barrier_rev[index] += dg*(-1)**(i)
+                    run = mk_object.kinetic_run(overpotential,
+                                                pH,
+                                                initial_conditions=initial_conditions,
+                                                temperature=temperature,
+                                                pressure=pressure,
+                                                gas_composition=gas_composition,
+                                                verbose=1,
+                                                jac=jac)
+                    if mk_object.reactor_model == 'differential':
+                        r[i] = list(run['r'].values())[
+                            self.grl[global_reaction_label]]
+                        r_tot = list(run['r'].values())
+                        r_tot = [r_tot[i] for i in range(
+                            self.NR) if i in list(self.grl.values())]
+                        s[i] = r[i] / sum(r_tot)
+                    else:  # dynamic CSTR
+                        r[i] = run['R_' + global_reaction_label]
+                drc = (-K_B*temperature) * (np.log(r[0])-np.log(r[1])) / (2*dg)
+                dsc = (-K_B*temperature) * (np.log(s[0])-np.log(s[1])) / (2*dg)
+            else:  # Originally unactivated reaction
+                for i in range(2):
+                    mk_object = electroMKM('i',
+                                    self.input_rm,
+                                    self.input_g,
+                                    t_ref=self.t_ref,
+                                    reactor=self.reactor_model,
+                                    inerts=self.inerts)
+                    if mk_object.dg_reaction[index] < 0.0:
+                        mk_object.dg_barrier[index] = dg * i
+                        mk_object.dg_barrier_rev[index] += dg * i
+                    else:
+                        mk_object.dg_barrier[index] = mk_object.dg_reaction[index] + dg * i
+                    run = mk_object.kinetic_run(overpotential,
+                                                pH,
+                                                initial_conditions=initial_conditions,
+                                                temperature=temperature,
+                                                pressure=pressure,
+                                                gas_composition=gas_composition,
+                                                verbose=1,
+                                                jac=jac)
+                    if mk_object.reactor_model == 'differential':
+                        r[i] = list(run['r'].values())[
+                            self.grl[global_reaction_label]]
+                        r_tot = list(run['r'].values())
+                        r_tot = [r_tot[i] for i in range(
+                            self.NR) if i in list(self.grl.values())]
+                        s[i] = r[i] / sum(r_tot)
+                    else:  # dynamic CSTR
+                        r[i] = run['R_'+global_reaction_label]
+                drc = (-K_B*temperature) * (np.log(r[1])-np.log(r[0])) / dg
+                dsc = (-K_B*temperature) * (np.log(s[1])-np.log(s[0])) / dg
+        else:  # Surface intermediate
+            for i in range(2):
+                mk_object = electroMKM('i',
+                                       self.input_rm,
+                                       self.input_g,
+                                       t_ref=self.t_ref,
+                                       reactor=self.reactor_model,
+                                       inerts=self.inerts)
+                mk_object.g_species[index] += dg * (-1) ** (i)
+                for j in range(mk_object.NR):
+                    mk_object.dg_reaction[j] = np.sum(
+                        mk_object.v_matrix[:, j]*np.array(mk_object.g_species))
+                    condition1 = mk_object.g_ts[j] != 0.0
+                    ind = list(np.where(mk_object.v_matrix[:, j] == -1)[0]) + list(
+                        np.where(mk_object.v_matrix[:, j] == -2)[0])
+                    gis = sum([mk_object.g_species[k] *
+                              mk_object.v_matrix[k, j]*(-1) for k in ind])
+                    condition2 = mk_object.g_ts[j] > max(
+                        gis, gis+mk_object.dg_reaction[j])
+
+                    if condition1 and condition2:  # Activated elementary reaction
+                        mk_object.dg_barrier[j] = mk_object.g_ts[j] - gis
+                        mk_object.dg_barrier_rev[j] = mk_object.dg_barrier[j] - \
+                            mk_object.dg_reaction[j]
+                    else:  # Unactivated elementary reaction
+                        if mk_object.dg_reaction[j] < 0.0:
+                            mk_object.dg_barrier[j] = 0.0
+                            mk_object.dg_barrier_rev[j] = - \
+                                mk_object.dg_reaction[j]
+                        else:
+                            mk_object.dg_barrier[j] = mk_object.dg_reaction[j]
+                            mk_object.dg_barrier_rev[j] = 0.0
+                run = mk_object.kinetic_run(overpotential,
+                                            pH,
+                                            initial_conditions=initial_conditions,
+                                            temperature=temperature,
+                                            pressure=pressure,
+                                            gas_composition=gas_composition,
+                                            verbose=1,
+                                            jac=jac)
+                if mk_object.reactor_model == 'differential':
+                    r[i] = list(run['r'].values())[
+                        self.grl[global_reaction_label]]
+                    r_tot = list(run['r'].values())
+                    r_tot = [r_tot[i] for i in range(
+                        self.NR) if i in list(self.grl.values())]
+                    s[i] = r[i] / sum(r_tot)
+                else:  # dynamic CSTR
+                    r[i] = run['R_'+global_reaction_label]
+            drc = (-K_B*temperature) * (np.log(r[0])-np.log(r[1])) / (2*dg)
+            dsc = (-K_B*temperature) * (np.log(s[0])-np.log(s[1])) / (2*dg)
+        print('DRC = {:0.2f}'.format(drc))
+        return drc, dsc
+
+    def drc_full(self,
+                 global_reaction_label,
+                 overpotential,
+                 pH,
+                 initial_conditions=None,
+                 temperature=298.0,
+                 pressure=1e5,
+                 gas_composition=None,
+                 dg=1.0E-6,
+                 jac=False):
+        """
+        Wrapper function that calculates the degree of rate control of all
+        intermediates and transition states at the desired conditions.        
+        Args:
+            temperature(float): Temperature of the experiment [K]
+            pressure(float): Partial pressure of the gaseous species [Pa]
+            gas_composition(nparray): Molar fraction of the gaseous species [-]
+            global_reaction_label(str): Global reaction for which all DRC/DSC are computed
+            initial_conditions(nparray): Initial surface coverage [-]
+            dg(float): Applied perturbation to the Gibbs energy of the TS/intermediates.
+                       Default=1E-6 eV                       
+        Returns:
+            Two Pandas DataFrames with final all results.        
+        """
+        print('{}: Full DRC and DSC analysis wrt {} global reaction'.format(self.name,
+                                                                            global_reaction_label))
+        print('Temperature = {}K    Pressure = {:.1f}bar'.format(
+            temperature, pressure/1e5))
+        sgas = []
+        for i in self.species_gas:
+            sgas.append(i.strip('(g)'))
+        str_list = ['{}={:.1f}%  '.format(i, j) for i, j in zip(sgas,
+                                                                list(np.array(gas_composition)*100.0))]
+        gas_string = 'Gas composition: '
+        for i in str_list:
+            gas_string = gas_string + i
+        print(gas_string)
+        if (global_reaction_label != self.target_label) and (global_reaction_label not in self.by_products_label):
+            raise Exception('Unexisting global reaction string.')
+        if dg > 0.1:
+            raise Exception(
+                'Too high perturbation (recommended lower than 1e-6 eV)')
+        drc_ts = np.zeros(self.NR)
+        dsc_ts = np.zeros(self.NR)
+        drc_int = np.zeros(self.NC_sur)
+        dsc_int = np.zeros(self.NC_sur)
+        for reaction in range(self.NR):
+            print('')
+            print('R{}'.format(reaction+1))
+            drc_ts[reaction], dsc_ts[reaction] = self.degree_of_rate_control(global_reaction_label,
+                                                                            'R{}'.format(reaction+1),
+                                                                            overpotential,
+                                                                            pH,
+                                                                            initial_conditions=initial_conditions,
+                                                                            temperature=temperature,
+                                                                            pressure=pressure,
+                                                                            gas_composition=gas_composition,
+                                                                            dg=dg,
+                                                                            jac=jac,
+                                                                            verbose=1)
+        for species in range(self.NC_sur):
+            print('')
+            print('{}'.format(self.species_sur[species]))
+            drc_ts[reaction], dsc_ts[reaction] = self.degree_of_rate_control(global_reaction_label,
+                                                                             self.species_sur[species],
+                                                                             overpotential,
+                                                                             pH,
+                                                                             initial_conditions=initial_conditions,
+                                                                             temperature=temperature,
+                                                                             pressure=pressure,
+                                                                             gas_composition=gas_composition,
+                                                                             dg=dg,
+                                                                             jac=jac,
+                                                                             verbose=1)
+        r = []
+        for i in range(self.NR):
+            r.append('R{}'.format(i+1))
+        drsc_ts = np.concatenate((np.array([drc_ts]).T,
+                                  np.array([dsc_ts]).T),
+                                 axis=1)
+        df_drsc_ts = pd.DataFrame(np.round(drsc_ts, decimals=2),
+                                  index=r,
+                                  columns=['DRC', 'DSC'])
+        df_drsc_ts.to_csv("X_{}_{}_{}_ts.csv".format(global_reaction_label,
+                                                     int(temperature),
+                                                     int(pressure/1e5)))
