@@ -389,7 +389,7 @@ class electroMKM:
                 kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
             elif self.reaction_type[reaction] == 'des':
-                kd[reaction] = (K_B * temperature / H) * \
+                kd[reaction] = (K_B * temperature / H ) * \
                     np.exp(-self.dg_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
             elif self.reaction_type[reaction] == 'sur':  
@@ -536,7 +536,8 @@ class electroMKM:
         if gas_composition is None:
             y_0[self.NC_sur:] = 0.0
         else:
-            y_0[self.NC_sur:] = pressure * gas_composition
+            y_0[self.NC_sur:] = pressure * gas_composition / 1e5
+        #print(y_0)
         #-----------------------------------------------------------------------------------------------
         if temperature < 0.0:
             raise ValueError('Wrong temperature (T > 0 K)')
