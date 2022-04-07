@@ -18,15 +18,14 @@ reactor_dict = {"differential" : DifferentialPFR(), "dynamic": DynamicCSTR()}
 
 class MKM:
     """
-    A class for representing microkinetic models for heterogeneous catalytic systems. 
-    It provides functionalities to obtain information like reaction rates, steady-state surface coverage, apparent
+    A class for representing microkinetic models for heterogeneous catalytic systems, providing
+    functionalities to obtain information like reaction rates, steady-state surface coverage, apparent
     activation energy and reaction orders. Moreover, it provides tools for identifying the descriptors
     of the global process, like the reversibility and degree of rate control analysis.
     Attributes: 
         name(string): Name of the system under study.
         rm_input(string): .mkm file containing the reaction mechanism.
         g_input(string): .mkm file containing the energetics of the system.
-        reactor(string): reactor model used for representing the system under study. 
         t_ref(float): Reference temperature at which entropic contributions have been calculated [K].
         inerts(list): Inert species in the system under study. The list contains the species name as strings.
     """
@@ -41,11 +40,12 @@ class MKM:
         self.reactor_model = "differential"
         self.reactor = reactor_dict["differential"]
         self.inerts = inerts
-        # rm.mkm parsing -> Reaction mechanism
+        self.ODE_params = {'reltol': 1e-12, "abstol": 1e-64, "tfin": 1e3}  # ODE solver parameters 
+        # Reaction mechanism extraction from rm.mkm
         rm_lines = preprocess_rm(rm_input)
         self.NGR, self.NR = get_NGR_NR(rm_lines)  # Number of global (NGR) and elementary (NR) reactions
         self.r = ['R{}'.format(i+1) for i in range(self.NR)]
-        self.ngr = ['GR{}'.format(i+1) for i in range(self.NGR)]
+        self.gr = ['GR{}'.format(i+1) for i in range(self.NGR)]
         global_reaction_label = [rm_lines[reaction].split()[0] for reaction in range(self.NGR)]
         global_reaction_index = [int(rm_lines[reaction].split()[1][:-1]) for reaction in range(self.NGR)]
         self.gr_string = [" ".join(rm_lines[reaction].split()[2:]) for reaction in range(self.NGR)]
@@ -63,92 +63,18 @@ class MKM:
         self.v_b = stoic_backward(self.v_matrix)        
         self.MW = gas_MW(self.species_gas)                                                      
         self.m = ads_mass(self.v_matrix, self.reaction_type, self.NC_sur, list(self.MW.values()))
-        self.v_global = global_v_matrix(self.NC_tot, self.NGR, self.gr_string, self.species_tot, self.NC_sur, self.species_gas)
-        # Stoichiometric vector for global_reactions (NR x NGR)
-        self.stoich_numbers = stoich_numbers(self.NR, self.NGR, self.v_matrix, self.v_global)
+        self.v_global = global_v_matrix(self.gr_string, self.species_tot, self.NC_sur)
+        self.stoich_numbers = stoich_numbers(self.v_matrix, self.v_global)
         # g.mkm parsing -> Energetics
-        g_lines = preprocess_g(g_input)
-        E_ts = g_lines[:self.NR]
-        E_species = [line for line in g_lines[self.NR+3:] if line != ""]
-        H_ts = np.zeros(self.NR)
-        S_ts = np.zeros(self.NR) 
-        H_species = np.zeros(self.NC_tot)
-        S_species = np.zeros(self.NC_tot)
-        keys_R = [E_ts[i].split()[0] for i in range(len(E_ts))]
-        keys_species = [E_species[j].split()[0].strip(':') for j in range(len(E_species))]
-        for i in range(self.NR):
-            index = keys_R.index('R{}:'.format(i+1))
-            H_ts[i] = float(E_ts[index].split()[1])
-            S_ts[i] = float(E_ts[index].split()[-1]) / t_ref
-        for i in range(self.NC_tot):
-            if self.species_tot[i].strip('(g)') not in inerts:
-                index = keys_species.index(self.species_tot[i])
-                H_species[i] = float(E_species[index].split()[1])
-                S_species[i] = float(E_species[index].split()[-1]) / t_ref
-            else:
-                H_species[i] = 0.0
-                S_species[i] = 0.0
-        self.h_species = H_species
-        self.s_species = S_species
-        self.g_species = H_species - t_ref * S_species
-        self.h_ts = H_ts
-        self.s_ts = S_ts
-        self.g_ts = H_ts - t_ref * S_ts
-
-        self.dh_reaction = np.zeros(self.NR)
-        self.ds_reaction = np.zeros(self.NR)
-        self.dg_reaction = np.zeros(self.NR)
-        self.dh_barrier = np.zeros(self.NR)
-        self.ds_barrier = np.zeros(self.NR)
-        self.dg_barrier = np.zeros(self.NR)
-        self.dh_barrier_rev = np.zeros(self.NR)
-        self.ds_barrier_rev = np.zeros(self.NR)
-        self.dg_barrier_rev = np.zeros(self.NR)
-        for i in range(self.NR):
-            self.dh_reaction[i] = np.sum(
-                self.v_matrix[:, i]*np.array(self.h_species))
-            self.ds_reaction[i] = np.sum(
-                self.v_matrix[:, i]*np.array(self.s_species))
-            self.dg_reaction[i] = self.dh_reaction[i] - \
-                t_ref * self.ds_reaction[i]
-            condition1 = self.g_ts[i] != 0.0
-            ind = list(np.where(
-                self.v_matrix[:, i] == -1)[0]) + list(np.where(self.v_matrix[:, i] == -2)[0])
-            his = sum([self.h_species[j]*self.v_matrix[j, i]*(-1)
-                      for j in ind])
-            sis = sum([self.s_species[j]*self.v_matrix[j, i]*(-1)
-                      for j in ind])
-            gis = sum([self.g_species[j]*self.v_matrix[j, i]*(-1)
-                      for j in ind])
-            condition2 = self.g_ts[i] > max(gis, gis+self.dg_reaction[i])
-            if condition1 and condition2:  # Activated elementary reaction
-                self.dh_barrier[i] = self.h_ts[i] - his
-                self.dh_barrier_rev[i] = self.dh_barrier[i] - \
-                    self.dh_reaction[i]
-                self.ds_barrier[i] = self.s_ts[i] - sis
-                self.ds_barrier_rev[i] = self.ds_barrier[i] - \
-                    self.ds_reaction[i]
-                self.dg_barrier[i] = self.g_ts[i] - gis
-                self.dg_barrier_rev[i] = self.dg_barrier[i] - \
-                    self.dg_reaction[i]
-            else:  # Unactivated elementary reaction
-                if self.dg_reaction[i] < 0.0:
-                    self.dh_barrier[i] = 0.0
-                    self.dh_barrier_rev[i] = -self.dh_reaction[i]
-                    self.ds_barrier[i] = 0.0
-                    self.ds_barrier_rev[i] = -self.ds_reaction[i]
-                    self.dg_barrier[i] = 0.0
-                    self.dg_barrier_rev[i] = -self.dg_reaction[i]
-                else:
-                    self.dh_barrier[i] = self.dh_reaction[i]
-                    self.dh_barrier_rev[i] = 0.0
-                    self.ds_barrier[i] = self.ds_reaction[i]
-                    self.ds_barrier_rev[i] = 0.0
-                    self.dg_barrier[i] = self.dg_reaction[i]
-                    self.dg_barrier_rev[i] = 0.0
-
-        self.ODE_params = {'reltol': 1e-12, "abstol": 1e-64, "tfin": 1e3}
-        self.df_system = pd.DataFrame(self.v_matrix, index=self.species_tot,
+        self.h_species, self.s_species, self.g_species = species_energy(preprocess_g(g_input), self.NR, self.NC_tot, t_ref, self.species_tot, inerts)
+        self.h_ts, self.s_ts, self.g_ts= ts_energy(preprocess_g(g_input), self.NR, t_ref)
+        self.dh_reaction, self.ds_reaction, self.dg_reaction = reaction_energy(self.v_matrix, self.h_species, self.s_species, t_ref)
+        self.dh_barrier, self.dh_barrier_rev = h_barrier(self.v_matrix, self.h_ts, self.h_species, self.dh_reaction)
+        self.ds_barrier, self.ds_barrier_rev = s_barrier(self.v_matrix, self.s_ts, self.s_species, self.ds_reaction)
+        self.dg_barrier, self.dg_barrier_rev = g_barrier(self.v_matrix, self.g_ts, self.g_species, self.dg_reaction)
+        # DataFrames
+        self.df_system = pd.DataFrame(self.v_matrix,
+                                      index=self.species_tot,
                                       columns=[self.r, self.reaction_type])
         self.df_system.index.name = 'species'
         self.df_gibbs = pd.DataFrame(np.array([self.dg_reaction, self.dg_barrier, self.dg_barrier_rev]).T,
@@ -289,8 +215,8 @@ class MKM:
         Args:
             temperature(float): temperature [K].
         """
-        k_h = np.exp(-self.dh_reaction/(K_B*temperature))
-        k_s = np.exp(self.ds_reaction/K_B)
+        k_h = np.exp(-self.dh_reaction / (K_B * temperature))
+        k_s = np.exp(self.ds_reaction / K_B)
         DHR_model = np.zeros(self.NGR)
         DSR_model = np.zeros(self.NGR)
         DGR_model = np.zeros(self.NGR)
@@ -317,12 +243,10 @@ class MKM:
             keq_model[i] = keq_H_model[i] * keq_S_model[i]
             keq_database[i] = keq_H_database[i] * keq_S_database[i]
         print(" {}: Thermodynamic consistency analysis".format(self.name))
-        print(" Temperature = {} K".format(temperature))
-        print("")
-        print("----------------------------------------------------------------------------------")
+        print(" Temperature = {} K\n".format(temperature))
+        print("----------------------------------------------------------------------------------\n")
         for global_reaction in range(self.NGR):
             print(self.gr_string[global_reaction])
-            print("")
             print("Model:    DHR={:0.2e} kJ/mol    DSR={:0.2e} kJ/mol/K     DGR={:0.2e} kJ/mol".format(
                 DHR_model[global_reaction], DSR_model[global_reaction], DGR_model[global_reaction]))
             print("Database: DHR={:0.2e} kJ/mol    DSR={:0.2e} kJ/mol/K     DGR={:0.2e} kJ/mol".format(
@@ -333,8 +257,7 @@ class MKM:
             print("Database: keqH={:0.2e}    keqS={:0.2e}    Keq={:0.2e}".format(
                 keq_H_database[global_reaction], keq_S_database[global_reaction], keq_database[global_reaction]))
             print(
-                "----------------------------------------------------------------------------------")
-            print("")
+                "----------------------------------------------------------------------------------\n")
         return None
 
     def __ode_solver_solve_ivp(self,

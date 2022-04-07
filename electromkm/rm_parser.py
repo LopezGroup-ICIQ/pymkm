@@ -62,37 +62,47 @@ def get_NGR_NR(input_list):
     NR = len(input_list) - NGR - 3
     return NGR, NR
 
-def get_NC(species_sur, species_gas):
+def get_NC(species_sur: list, species_gas: list, species_tot: list):
     """
     Get number of surface intermediates, gas species and total species in the system 
     under study.
     Args:
         species_sur(list): list of surface species labels (strings)
         species_gas(list): list of gas species labels (strings)
+        species_tot(list): list of all the species labels (including CHE)
     Returns:
          (int, int, int)
     """
-    return len(species_sur), len(species_gas), len(species_sur+species_gas)
+    return len(species_sur), len(species_gas), len(species_tot)
 
-def reaction_type(lines, NR, NGR):
+def reaction_type(lines: list, NR: int, NGR: int):
+    """Get type of elementary reaction (adsorption, charge transfer, etc.)
+
+    Args:
+        lines (list): post-processed lines from rm.mkm
+        NR (int): number of elementary reactions
+        NGR (int): number of global reactions
+
+    Returns:
+        reaction_type
     """
-    
-    """
-    reaction_type_list = []
+    reaction_type = []
     for reaction in range(NR):
         line_list = lines[reaction + 3 + NGR].split()
-        arrow_index = line_list.index('->')
+        arrow_index = line_list.index('->')        
         try:  # Extraction of reaction type
             gas_index = line_list.index([element for idx, element in enumerate(line_list) if '(g)' in element][0])
         except IndexError:
-            reaction_type_list.append('sur')  # Surface reaction
+            reaction_type.append('sur')  # Surface reaction
         else:
             if gas_index < arrow_index:
-                reaction_type_list.append('ads')  # Adsorption
+                reaction_type.append('ads')  # Adsorption
             else:
-                reaction_type_list.append('des')  # Desorption
+                reaction_type.append('des')  # Desorption
+        if "H(e)".format() in line_list:
+            reaction_type[reaction] += "+e"  # Charge-transfer
     #print(reaction_type_list)
-    return reaction_type_list
+    return reaction_type
 
 def get_species_label(lines, NGR, inerts):
     """
@@ -121,7 +131,6 @@ def get_species_label(lines, NGR, inerts):
     if inerts != None:
         for species in inerts:
                 species_label.append(species +'(g)')
-    #print(species_label)
     return species_label
         
 def stoich_matrix(lines, NR, NGR, species_label):
@@ -199,65 +208,60 @@ def classify_species(species_label):
     for element in species_label:  # Classification of species (sur/gas)
         if '(g)' in element:
             species_gas_label.append(element)
+        elif element == "H(e)":
+            CHE_switch = 1
         else:
             species_sur_label.append(element)
     species_sur_label = natsorted(species_sur_label)
-    species_tot = species_sur_label + species_gas_label
+    if CHE_switch == 1:
+        species_tot = species_sur_label + ["H(e)"] + species_gas_label
+    else:
+        species_tot = species_sur_label + species_gas_label
     return species_sur_label, species_gas_label, species_tot
 
-def global_v_matrix(gr_strings, species_tot, NC_sur):
+def global_v_matrix(NC_tot, NGR, gr_strings, species_tot, NC_sur, species_gas):
     """
-    Get stoichiometric matrix for the global reactions.
-    Args:
-        gr_strings(list):
-        species_tot(list):
-        NC_sur(int): number of surface intermediates
-    Returns:
-        v_global(numpy.ndarray)
+    
     """
-    NC_tot = len(species_tot)
-    NGR = len(gr_strings)
-    species_gas = species_tot[NC_sur:]
     v_global = np.zeros((NC_tot, NGR))
     for i in range(NC_tot):
         for j in range(NGR):
             reaction_list = gr_strings[j].split()
             arrow_index = reaction_list.index('->')
-            if species_tot[i].strip('(g)') in reaction_list:
-                if reaction_list.index(species_tot[i].strip('(g)')) < arrow_index:
+            if species_tot[i].replace('(g)', "") in reaction_list:
+                if reaction_list.index(species_tot[i].replace('(g)', "")) < arrow_index:
                     v_global[i, j] = -1
                 else:
                     v_global[i, j] = 1
             else:
-                if '2'+species_tot[i].strip('(g)') in reaction_list:
-                    if reaction_list.index('2'+species_tot[i].strip('(g)')) < arrow_index:
+                if '2'+species_tot[i].replace('(g)', "") in reaction_list:
+                    if reaction_list.index('2'+species_tot[i].replace('(g)', "")) < arrow_index:
                         v_global[i, j] = -2
                     else:
                         v_global[i, j] = 2
-                elif '3'+species_tot[i].strip('(g)') in reaction_list:
-                    if reaction_list.index('3'+species_tot[i].strip('(g)')) < arrow_index:
+                elif '3'+species_tot[i].replace('(g)', "") in reaction_list:
+                    if reaction_list.index('3'+species_tot[i].replace('(g)', "")) < arrow_index:
                         v_global[i, j] = -3
                     else:
                         v_global[i, j] = 3
-    for i in range(NC_tot):
-        for j in range(NGR):
-            if (i < NC_sur) and (species_tot[i]+'(g)' in species_gas):
-                v_global[i, j] = 0
+    # for i in range(NC_tot):
+    #     for j in range(NGR):
+    #         if (i < NC_sur) and (species_tot[i]+'(g)' in species_gas):
+    #             v_global[i, j] = 0
     return v_global
 
-def stoich_numbers(v_matrix, v_global):
+def stoich_numbers(NR, NGR, v_matrix, v_global):
     """
     Find stoichiometric factors for each elementary reaction in the network.
     Args:
-        v_matrix(numpy.ndarray): stoichiometric matrix
-        v_global(numpy.ndarray): global stoichiometric matrix
+        NR(int): number of reactions
+        NGR(int): number of global reactions
+        v_matrix(ndarray): stoichiometric matrix
     Returns:
-        stoich_numbers(numpy.ndarray): Matrix with stoichiometric coefficients.
+        stoich_numbers(ndarray): NR * NGR matrix with stoichiometric coefficients.
              [i, j] is the stoichiometric coefficient of elementary reaction i for 
              global reaction j.
     """
-    NR = v_matrix.shape[1]
-    NGR = v_global.shape[1]
     stoich_numbers = np.zeros((NR, NGR))
     for i in range(NGR):
         sol = np.linalg.lstsq(v_matrix, v_global[:, i], rcond=None)
@@ -315,7 +319,7 @@ def ads_mass(v_matrix, reaction_type, NC_sur, masses):
         m(list): when not zero, item i represents the MW of the adsorbate in reaction R[i+1]
     """
     NR = v_matrix.shape[1]
-    NC_gas = v_matrix.shape[0] - NC_sur
+    NC_gas = v_matrix.shape[0] - NC_sur - 1
     m = [0] * NR   
     for i in range(NR):
         if reaction_type[i] == 'sur':

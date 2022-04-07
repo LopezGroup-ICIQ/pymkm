@@ -1,4 +1,5 @@
 """Functions for parsing g.mkm input file (system energetics"""
+
 import numpy as np
 
 def preprocess_g(input_file):
@@ -56,11 +57,29 @@ def ts_energy(lines: list, NR: int, tref: float):
     for i in range(NR):
         index = keys_R.index('R{}:'.format(i+1))
         H_ts[i] = float(E_ts[index].split()[1])
-        S_ts[i] = float(E_ts[index].split()[-1]) / tref 
+        S_ts[i] = float(E_ts[index].split()[2]) / tref 
     G_ts = H_ts - tref * S_ts
     return H_ts, S_ts, G_ts
 
-def species_energy(lines: list, NR: int, NC_tot: int, tref:float, species_tot: list, inerts: list):
+def chg_coeffient(lines: list, NR: int):
+    """
+    Get the charge transfer coefficients for the elementary
+    reactions in the mechanism.
+
+    Args:
+        lines (list): preprocessed lines from g.mkm
+        NR (int): number of elementary reactions
+    """
+    E_ts = lines[:NR]
+    alpha = np.zeros(NR) 
+    keys_R = [E_ts[i].split()[0] for i in range(len(E_ts))]
+    for i in range(NR):
+        index = keys_R.index('R{}:'.format(i+1))
+        alpha[i] = float(E_ts[index].split()[3]) 
+    return alpha
+    
+
+def species_energy(lines: list, NR: int, tref:float, species_tot: list, inerts: list):
     """Get species energy from g.mkm
 
     Args:
@@ -68,6 +87,7 @@ def species_energy(lines: list, NR: int, NC_tot: int, tref:float, species_tot: l
         NR (int): number of elementary reactions
         tref (float): temperature at which entropy has been calculated.
     """
+    NC_tot = len(species_tot)
     E_species = [line for line in lines[NR+3:] if line != ""]
     H_species = np.zeros(NC_tot)
     S_species = np.zeros(NC_tot)
@@ -195,4 +215,3 @@ def g_barrier(v_matrix: np.ndarray, g_ts: np.ndarray, g_species: np.ndarray, dg_
                 g_barrier[i] = dg_reaction[i]
                 g_barrier_rev[i] = 0.0
     return g_barrier, g_barrier_rev
-   

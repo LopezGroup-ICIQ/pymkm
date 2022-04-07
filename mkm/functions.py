@@ -84,7 +84,7 @@ def calc_eapp(temperature_vector, reaction_rate_vector):
         Apparent reaction energy in kJ/mol in the temperature range of interest.      
     """
     lm = LinearRegression()
-    x = 1 / temperature_vector
+    x = np.reciprocal(temperature_vector)    
     y = np.log(reaction_rate_vector)
     reg = lm.fit(x, y)
     Eapp = -(R/1000.0) * reg.coef_[0, 0]  # kJ/mol (typical unit of measure)
