@@ -59,25 +59,30 @@ class ReactorModel(ABC):
         ...
 
 class DifferentialPFR(ReactorModel):
-    def __init__(self, ss_tol=1e-10):
+    def __init__(self, ss_tol: float=1e-10):
         """
-        Reactor model: Differential Plug-Flow Reactor (PFR)
-        Main assumptions:
-            - Differential volume
-            - Zero-conversion model
-            - Isothermal, isobaric        
+        Differential Plug-Flow Reactor (PFR)
+        Main assumptions of the reactor model:
+            - Isothermal, isobaric
+            - Steady-state conditions
+            - Finite volume
+            - Perfect mixing    
+        
+        Args:
+            ss_tol(float): Tolerance parameter for controlling automatic stop when
+                           steady-state conditions are reached by the solver.    
         """
         self.reactor_type = "Differential PFR"
         self.ss_tol = ss_tol
 
-    def ode(self, time, y, kd, ki, v_matrix, NC_sur):
+    def ode(self, time, y, kd, ki, v_matrix, NC_sur) -> np.ndarray:
         # Surface species
         dy = v_matrix @ net_rate(y, kd, ki, v_matrix)
         # Gas species
-        dy[NC_sur:] = 0.0
+        dy[NC_sur:] = 0
         return dy
 
-    def jacobian(self, time, y, kd, ki, v_matrix, NC_sur):
+    def jacobian(self, time, y, kd, ki, v_matrix, NC_sur) -> np.ndarray:
         J = np.zeros((len(y), len(y)))
         Jg = np.zeros((len(kd), len(y)))
         Jh = np.zeros((len(kd), len(y)))
@@ -111,24 +116,21 @@ class DifferentialPFR(ReactorModel):
         return criteria
     termination_event.terminal = True
 
-    def conversion(self, P_in, P_out):
+    def conversion(self, P_in, P_out) -> float:
         return 1 - (P_out / P_in)
 
-    def selectivity(self, r_target, r_tot):
+    def selectivity(self, r_target, r_tot) -> float:
         return r_target / r_tot
 
     def reaction_rate(self):
         pass
 
-    def yyield(self, P_in, P_out, r_target, r_tot):
-        X = self.conversion(P_in, P_out)
-        S = self.selectivity(r_target, r_tot)
-        return X * S   
-
+    def yyield(self, P_in, P_out, r_target, r_tot) -> float:
+        return self.conversion(P_in, P_out) * self.selectivity(r_target, r_tot)
 class DynamicCSTR(ReactorModel):
     def __init__(self, radius=0.01, length=0.01, Q=1e-6, m_cat=1e-3, s_bet=1e5, a_site=1e-19, ss_tol=1e-5):
         """
-        Reactor model: Dynamic Continuous Stirred Tank Reactor (CSTR)
+        Dynamic Continuous Stirred Tank Reactor (CSTR)
         Main assumptions:
             - Isothermal, isobaric
             - Dynamic behaviour to reach steady state (target) with ODE solver

@@ -16,7 +16,7 @@ import graphviz
 
 reactor_dict = {"differential" : DifferentialPFR(), "dynamic": DynamicCSTR()}
 
-class MKM:
+class MicrokineticModel:
     """
     A class for representing microkinetic models for heterogeneous catalytic systems, providing
     functionalities to obtain information like reaction rates, steady-state surface coverage, apparent
