@@ -38,7 +38,6 @@ Albert Sabadell-Rendon (ICIQ), Sergio Pablo-García (ICIQ), Ranga Rohit Seemakur
   - **Pages:** 1721-1732
   - **Publisher:** RSC
   - **DOI:** 10.1039/D3DD00163F
-  - **Abstract:** Multiscale techniques integrating detailed atomistic information on materials and reactions to predict the performance of heterogeneous catalytic full-scale reactors have been suggested but lack seamless implementation. The largest challenges in the multiscale modeling of reactors can be grouped into two main categories: catalytic complexity and the difference between time and length scales of chemical and transport phenomena. Here we introduce the Automated MUltiscale Simulation Environment AMUSE, a workflow that starts from Density Functional Theory (DFT) data, automates the analysis of the reaction networks through graph theory, prepares it for microkinetic modeling, and subsequently integrates the results into a standard open-source Computational Fluid Dynamics (CFD) code. We demonstrate the capabilities of AMUSE by applying it to the unimolecular iso-propanol dehydrogenation reaction and then, increasing the complexity, to the pre-commercial Pd/In2O3 catalyst employed for the CO2 hydrogenation to methanol. The results show that AMUSE allows the computational investigation of heterogeneous catalytic reactions in a comprehensive way, providing essential information for catalyst design from the atomistic to the reactor scale level.
 
 </div>
 
