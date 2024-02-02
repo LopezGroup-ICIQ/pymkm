@@ -26,9 +26,9 @@ def kinetic_coeff(
     Returns:
         kd, kr (ndarray): arrays with kinetic constants for direct and reverse reactions.
     """
-    Keq = np.zeros(NR)  # Equilibrium constant
-    kd = np.zeros(NR)  # Direct constant
-    kr = np.zeros(NR)  # Reverse constant
+    Keq = np.zeros(NR, dtype=np.float64)  # Equilibrium constant
+    kd = np.zeros(NR, dtype=np.float64)  # Direct constant
+    kr = np.zeros(NR, dtype=np.float64)  # Reverse constant
     for reaction in range(NR):
         Keq[reaction] = np.exp(-dg_reaction[reaction] / temperature / K_B)
         if reaction_type[reaction] == "ads":
@@ -56,11 +56,9 @@ def net_rate(y, kd, ki, v_matrix):
     Returns:
         (ndarray): Net reaction rate of the elementary reactions [1/s].
     """
-    net_rate = np.zeros(len(kd))
     v_ff = stoic_forward(v_matrix)
     v_bb = stoic_backward(v_matrix)
-    net_rate = kd * np.prod(y**v_ff.T, axis=1) - ki * np.prod(y**v_bb.T, axis=1)
-    return net_rate
+    return kd * np.prod(y**v_ff.T, axis=1) - ki * np.prod(y**v_bb.T, axis=1)
 
 
 def z_calc(y, kd, kr, v_f, v_b):

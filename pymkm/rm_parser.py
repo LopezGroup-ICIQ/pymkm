@@ -145,7 +145,7 @@ def stoich_matrix(lines, NR, NGR, species_label):
         v_matrix(ndarray): stoichiometric matrix representing the network in the rm.mkm file
     """
     NC_tot = len(species_label)
-    v_matrix = np.zeros((NC_tot, NR))
+    v_matrix = np.zeros((NC_tot, NR), dtype=np.int8)
 
     for reaction in range(NR):
         line = lines[NGR + 3 + reaction].split()
@@ -176,7 +176,7 @@ def stoic_forward(matrix):
     Returns:
         mat(ndarray): Filtered matrix for constructing forward reaction rates.
     """
-    mat = np.zeros([matrix.shape[0], matrix.shape[1]])
+    mat = np.zeros([matrix.shape[0], matrix.shape[1]], dtype=np.int8)
     for i in range(mat.shape[0]):
         for j in range(mat.shape[1]):
             if matrix[i][j] < 0:
@@ -194,7 +194,7 @@ def stoic_backward(matrix):
     Returns:
         mat(ndarray): Filtered matrix for constructing reverse reaction rates.
     """
-    mat = np.zeros([matrix.shape[0], matrix.shape[1]])
+    mat = np.zeros([matrix.shape[0], matrix.shape[1]], dtype=np.int8)
     for i in range(mat.shape[0]):
         for j in range(mat.shape[1]):
             if matrix[i][j] > 0:
