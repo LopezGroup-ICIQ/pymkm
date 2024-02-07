@@ -47,7 +47,20 @@ class electroMKM:
         self.r = ['R{}'.format(i+1) for i in range(self.NR)]
         self.gr = ['GR{}'.format(i+1) for i in range(self.NGR)]
         global_reaction_label = [rm_lines[reaction].split()[0] for reaction in range(self.NGR)]
+        self.global_reaction_label=global_reaction_label
         global_reaction_index = [int(rm_lines[reaction].split()[1][:-1]) for reaction in range(self.NGR)]
+
+        global_PCET = np.zeros(self.NGR)
+        for reaction in range(self.NGR):
+            if 'H(e)' in rm_lines[reaction]:
+                global_PCET[reaction]=int(rm_lines[reaction][rm_lines[reaction].find("H(e)") - 1])
+            elif 'H2O(e)' in rm_lines[reaction]:
+                global_PCET[reaction]=int(rm_lines[reaction][rm_lines[reaction].find("H2O(e)") - 1])
+        
+        self.grl_pcet={} #Define grl_PCET?
+        for id, i in enumerate(global_reaction_label):
+            self.grl_pcet[i]=[global_reaction_index[id],global_PCET[id],1]
+
         self.gr_string = [" ".join(rm_lines[reaction].split()[2:]) for reaction in range(self.NGR)]
         self.target = global_reaction_index[0]
         self.target_label = global_reaction_label[0]
@@ -55,14 +68,15 @@ class electroMKM:
         self.by_products_label = global_reaction_label[1:]
         self.grl = dict(zip(global_reaction_label, global_reaction_index))
         self.gr_dict = dict(zip(global_reaction_label, self.gr_string))
+        self.gpcet_dict = dict(zip(global_reaction_label, global_PCET))
         self.reaction_type = reaction_type(rm_lines, self.NR, self.NGR)
-        self.species_sur, self.species_gas, self.species_tot = classify_species(get_species_label(rm_lines, self.NGR, inerts))
-        self.NC_sur, self.NC_gas, self.NC_tot = get_NC(self.species_sur, self.species_gas, self.species_tot)
+        self.species_sur, self.species_gas, self.species_acid, self.species_base, self.species_tot = classify_species(get_species_label(rm_lines, self.NGR, inerts))
+        self.NC_sur, self.NC_gas, self.NC_acid, self.NC_base, self.NC_tot = get_NC(self.species_sur, self.species_gas, self.species_acid, self.species_base, self.species_tot)
         self.v_matrix = stoich_matrix(rm_lines, self.NR, self.NGR, self.species_tot)
         self.v_f = stoic_forward(self.v_matrix).T
         self.v_b = stoic_backward(self.v_matrix).T
         self.MW = gas_MW(self.species_gas)                                                      
-        self.m = ads_mass(self.v_matrix, self.reaction_type, self.NC_sur, list(self.MW.values()))
+        self.m = ads_mass(self.v_matrix, self.reaction_type, self.NC_sur, self.NC_acid, self.NC_base, list(self.MW.values()))
         self.v_global = global_v_matrix(self.NC_tot, self.NGR, self.gr_string, self.species_tot, self.NC_sur, self.species_gas)
         self.stoich_numbers = stoich_numbers(self.NR, self.NGR, self.v_matrix, self.v_global)
         # g.mkm parsing -> Energetics
@@ -74,7 +88,7 @@ class electroMKM:
         self.ds_barrier, self.ds_barrier_rev = s_barrier(self.v_matrix, self.s_ts, self.s_species, self.ds_reaction)
         self.dg_barrier, self.dg_barrier_rev = g_barrier(self.v_matrix, self.g_ts, self.g_species, self.dg_reaction)
         # Pandas DataFrames
-        self.df_system = pd.DataFrame(self.v_matrix, index=self.species_sur+["H(e)"]+self.species_gas,
+        self.df_system = pd.DataFrame(self.v_matrix, index=self.species_sur+self.species_acid+self.species_base+self.species_gas,
                                       columns=[self.r, self.reaction_type])
         self.df_system.index.name = 'species'
         self.df_gibbs = pd.DataFrame(np.array([self.dg_reaction,
@@ -112,7 +126,68 @@ class electroMKM:
         print("Absolute tolerance = {}".format(abstol))
         return "Changed ODE solver parameters."
 
-    def kinetic_coeff(self, overpotential, temperature, area_active_site=1e-19):
+    def get_reaction_energetics(self, overpotential, pH, temperature):
+        """
+        Gets the reaction energetics based on the specified overpotential and pH. The energetics of electrochemical steps containing the H(e) reactant are modified.               
+        Args: 
+            overpotential(float): applied overpotential [V].
+            pH (float): pH of the electrolyte [unitless]
+            temperature(float): absolute temperature [K].
+        Returns:
+            (list): list with 3 ndarrays for of reaction energetics and barriers.
+        """
+        #print(self.dg_reaction)
+
+        dg_F_reaction = np.zeros(len(self.dg_reaction))
+        dg_F_barrier = np.zeros(len(self.dg_barrier))
+        dg_F_barrier_rev = np.zeros(len(self.dg_barrier_rev))
+
+        #print(dg_F_reaction)
+
+        for reaction in range(self.NR):
+            if '_e' in self.reaction_type[reaction]:
+            #if self.reaction_type[reaction] != 'ads' and self.reaction_type[reaction] != 'des' and self.reaction_type[reaction] != 'sur':
+                if 'a_e' in self.reaction_type[reaction]:
+                    index_a = self.species_tot.index('H(e)')
+                    z_i_a = self.v_matrix[index_a, reaction]
+                #print(self.alfa[reaction] * z_i * overpotential)
+                    dg_F_reaction[reaction] = self.dg_reaction[reaction] - z_i_a * overpotential - z_i_a * 2.3 * K_B * temperature * pH
+                    dg_F_barrier[reaction] = self.dg_barrier[reaction] - self.alfa[reaction] * z_i_a * overpotential - z_i_a * 2.3 * K_B * temperature * pH
+                elif 'b_e' in self.reaction_type[reaction]:
+                    index_b = self.species_tot.index('H2O(e)')
+                    z_i_b = self.v_matrix[index_b, reaction]
+                #print(self.alfa[reaction] * z_i * overpotential)
+                    dg_F_reaction[reaction] = self.dg_reaction[reaction] - z_i_b * overpotential - z_i_b * 2.3 * K_B * temperature * pH
+                    dg_F_barrier[reaction] = self.dg_barrier[reaction] - self.alfa[reaction] * z_i_b * overpotential                     
+            else:
+                dg_F_reaction[reaction] = self.dg_reaction[reaction]
+                dg_F_barrier[reaction] = self.dg_barrier[reaction]
+                # potential_diff=(overpotential/10)
+                # cation_ads_ener=-self.h_species[index_cation]- z_i_cation * potential_diff
+                # K_cation_ads = np.exp(-cation_ads_ener/(K_B*temperature))
+                # site_adj_factor = K_cation_ads*cation_conc / (1+K_cation_ads*cation_conc)         
+                # #print(cation_ads_ener)
+                # if cation_ads_ener>0.07:
+                #     dg_F_reaction[reaction] =  dg_F_reaction[reaction] - z_i_cation * potential_diff
+                #     dg_F_barrier[reaction] =   dg_F_barrier[reaction] - z_i_cation * potential_diff
+                # else:
+                #     dg_F_reaction[reaction] =  dg_F_reaction[reaction] + (self.h_species[index_cation]+0.07)
+                #     dg_F_barrier[reaction] =   dg_F_barrier[reaction] + (self.h_species[index_cation]+0.07)
+                #print(reaction,dg_F_reaction[reaction],dg_F_barrier[reaction]) 
+            if dg_F_barrier[reaction] < 0:
+                dg_F_barrier[reaction] = 0
+            dg_F_barrier_rev[reaction] = dg_F_barrier[reaction] - dg_F_reaction[reaction]
+            
+            self.df_gibbs_e = pd.DataFrame(np.array([dg_F_reaction,
+                                               dg_F_barrier,
+                                               dg_F_barrier_rev]).T,
+                                     index=[self.r, self.reaction_type],
+                                     columns=['DGR_e / eV',
+                                              'DG barrier_e / eV',
+                                              'DG reverse barrier_e / eV'])
+        return dg_F_reaction, dg_F_barrier, dg_F_barrier_rev
+
+    def kinetic_coeff(self, overpotential, pH, temperature, area_active_site=1e-19):
         """
         Returns the kinetic coefficient for the direct and reverse reactions, according to 
         the reaction type (adsorption, desorption or surface reaction) and TST.
@@ -127,15 +202,22 @@ class electroMKM:
         Keq = np.zeros(self.NR)  # Equilibrium constant
         kd = np.zeros(self.NR)   # Direct constant
         kr = np.zeros(self.NR)   # Reverse constant
+
+        dg_F_reaction, dg_F_barrier, dg_F_barrier_rev = self.get_reaction_energetics(overpotential,pH,temperature)
+
         for reaction in range(self.NR):
-            Keq[reaction] = np.exp(-self.dg_reaction[reaction] / (temperature * K_B))
+            Keq[reaction] = np.exp(-dg_F_reaction[reaction] / (temperature * K_B))
             if self.reaction_type[reaction] == 'ads':
-                kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
+                kd[reaction] = (K_B * temperature / H) * np.exp(-dg_F_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
             elif self.reaction_type[reaction] == 'des':
                 kd[reaction] = (K_B * temperature / H) * \
-                    np.exp(-self.dg_barrier[reaction] / temperature / K_B)
+                    np.exp(-dg_F_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
+            else:
+                kd[reaction] = (K_B * temperature / H) * np.exp(-dg_F_barrier[reaction] / temperature / K_B)
+                kr[reaction] = kd[reaction] / Keq[reaction]
+            '''
             elif self.reaction_type[reaction] == 'sur':  
                 kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
                 kr[reaction] = kd[reaction] / Keq[reaction]
@@ -152,6 +234,8 @@ class electroMKM:
                     kd[reaction] *= np.exp((1 - self.alfa[reaction]) * f * overpotential)
                     Keq[reaction] *= np.exp(f * overpotential)
                     kr[reaction] = kd[reaction] / Keq[reaction]
+                '''
+        #print(Keq)
         return kd, kr
 
     def differential_pfr(self, time, y, kd, ki):
@@ -202,6 +286,7 @@ class electroMKM:
                                dy,
                                temperature, 
                                overpotential, 
+                               pH,
                                reltol,
                                abstol,
                                t_final,
@@ -210,7 +295,7 @@ class electroMKM:
         """
         Helper function for solve_ivp ODE solver.
         """
-        kd, ki = self.kinetic_coeff(overpotential, temperature)
+        kd, ki = self.kinetic_coeff(overpotential,pH, temperature)
         args_list = [kd, ki]
         r = solve_ivp(dy,
                       (0.0, t_final),
@@ -245,14 +330,16 @@ class electroMKM:
         Returns:
             (dict): Report of the electrocatalytic simulation.        
         """
+        overpotential_RHE = overpotential + 0.059*pH
         if verbose == 0:
             print('{}: Microkinetic run'.format(self.name))
             print('Overpotential = {}V vs SHE    pH = {}'.format(overpotential, pH))
+            print('Overpotential = {}V vs RHE'.format(overpotential_RHE))
             print('Temperature = {}K    Pressure = {:.1f}bar'.format(temperature, pressure/1e5))
         # ODE initial conditions
         y_0 = np.zeros(self.NC_tot)
         # 1) surface coverage
-        if initial_sur_coverage == None:  # First surface species is the active site
+        if initial_sur_coverage is None:  # First surface species is the active site
             y_0[0] = 1.0 
         else:
             sum = np.sum(initial_sur_coverage)
@@ -260,13 +347,16 @@ class electroMKM:
             if sum != 1.0 or condition2:
                 raise ValueError('Wrong initial surface coverage: Sum must equal to 1 and values >= 0)')
             y_0[:self.NC_sur] = initial_sur_coverage
-        # 2) H+ activity (defined by pH)
-        y_0[self.NC_sur] = 10 ** (-pH)
+        # 2) H+ activity (defined to be one, CHE approximation is used to take care of pH)
+        if self.NC_acid!=0:
+            y_0[self.NC_sur-1+self.NC_acid] = 10 ** (-0)
+        if self.NC_base!=0:
+            y_0[self.NC_sur-1+self.NC_acid+self.NC_base] = 10 ** (-0)
         # 3) gas composition
         if gas_composition is None:
-            y_0[self.NC_sur+1:] = pressure  
+            y_0[self.NC_sur+self.NC_acid+self.NC_base:] = pressure / 1e5
         else:
-            y_0[self.NC_sur+1:] = pressure * gas_composition
+            y_0[self.NC_sur+self.NC_acid+self.NC_base:] = pressure * gas_composition / 1e5
         #-----------------------------------------------------------------------------------------------        
         if temperature < 0.0:
             raise ValueError('Wrong temperature (T > 0 K)')
@@ -300,16 +390,17 @@ class electroMKM:
                                                  self.differential_pfr,
                                                  temperature,
                                                  overpotential,
+                                                 pH,
                                                  *list(self.ODE_params.values()),
                                                  end_events=None,
                                                  jacobian_matrix=_)
         final_sr = self.differential_pfr(results_sr.t[-1],
                                          results_sr.y[:, -1],
-                                         *self.kinetic_coeff(overpotential,
+                                         *self.kinetic_coeff(overpotential, pH,
                                                              temperature))
         yfin_sr = results_sr.y[:self.NC_sur, -1]
         r_sr = net_rate(results_sr.y[:, -1],
-                        *self.kinetic_coeff(overpotential,
+                        *self.kinetic_coeff(overpotential, pH,
                                             temperature),
                         self.v_f, 
                         self.v_b)
@@ -326,7 +417,7 @@ class electroMKM:
                    ddt_dict,
                    r_dict,
                    *[r_sr[i] for i in list(self.grl.values())],
-                   *[j_sr[i] for i in list(self.grl.values())],
+                   *[array[1]*array[2]*j_sr[array[0]] for array in list(self.grl_pcet.values())],
                    s_target_sr,
                    masi_sr,
                    results_sr]
@@ -334,7 +425,7 @@ class electroMKM:
         if verbose == 0:
             print('')
             print('{} Current density: {:0.2e} mA cm-2'.format(self.target_label,
-                                                               j_sr[self.target]/10))
+                                                               output_dict[str('j_'+self.target_label)]/10))
             print('{} Selectivity: {:.2f}%'.format(self.target_label,
                                                    s_target_sr*100.0))
             print('Most Abundant Surface Intermediate: {} Coverage: {:.2f}% '.format(

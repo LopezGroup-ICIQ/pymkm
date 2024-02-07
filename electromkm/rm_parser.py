@@ -62,18 +62,20 @@ def get_NGR_NR(input_list):
     NR = len(input_list) - NGR - 3
     return NGR, NR
 
-def get_NC(species_sur: list, species_gas: list, species_tot: list):
+def get_NC(species_sur: list, species_gas: list, species_acid: list, species_base: list, species_tot: list):
     """
     Get number of surface intermediates, gas species and total species in the system 
     under study.
     Args:
         species_sur(list): list of surface species labels (strings)
         species_gas(list): list of gas species labels (strings)
+        species_acid(list): list of proton-electron couples (strings)
+        species_base(list): list of water-electron-hydroxide couples (strings)
         species_tot(list): list of all the species labels (including CHE)
     Returns:
          (int, int, int)
     """
-    return len(species_sur), len(species_gas), len(species_tot)
+    return len(species_sur), len(species_gas), len(species_acid), len(species_base), len(species_tot)
 
 def reaction_type(lines: list, NR: int, NGR: int):
     """Get type of elementary reaction (adsorption, charge transfer, etc.)
@@ -99,8 +101,13 @@ def reaction_type(lines: list, NR: int, NGR: int):
                 reaction_type.append('ads')  # Adsorption
             else:
                 reaction_type.append('des')  # Desorption
-        if "H(e)".format() in line_list:
-            reaction_type[reaction] += "+e"  # Charge-transfer
+        for line in line_list:
+            if "H(e)" in line:
+                reaction_type[reaction] += "+a_e"  # Charge-transfer
+            if "H2O(e)" in line:
+                reaction_type[reaction] += "+b_e" # Charge-transfer
+            if "cat" in line:
+                reaction_type[reaction] += "+cat" # cation  
     #print(reaction_type_list)
     return reaction_type
 
@@ -205,19 +212,26 @@ def classify_species(species_label):
     """
     species_sur_label = []
     species_gas_label = []
+    species_acid_label = []
+    species_base_label = []
     for element in species_label:  # Classification of species (sur/gas)
         if '(g)' in element:
             species_gas_label.append(element)
-        elif element == "H(e)":
+        elif "H(e)" in element:
             CHE_switch = 1
+            species_acid_label.append('H(e)')
+        elif "H2O(e)" in element:
+            CHE_switch_base = 1
+            species_base_label.append('H2O(e)')
         else:
             species_sur_label.append(element)
     species_sur_label = natsorted(species_sur_label)
-    if CHE_switch == 1:
-        species_tot = species_sur_label + ["H(e)"] + species_gas_label
-    else:
-        species_tot = species_sur_label + species_gas_label
-    return species_sur_label, species_gas_label, species_tot
+    # if CHE_switch == 1:
+    #     species_tot = species_sur_label + ["H(e)"] + species_gas_label
+    # else:
+    #     species_tot = species_sur_label + species_gas_label
+    species_tot = species_sur_label + species_acid_label + species_base_label + species_gas_label
+    return species_sur_label, species_gas_label,species_acid_label, species_base_label, species_tot
 
 def global_v_matrix(NC_tot, NGR, gr_strings, species_tot, NC_sur, species_gas):
     """
@@ -307,7 +321,7 @@ def gas_MW(species_gas, ):
         masses.append(mw)
     return dict(zip(species_gas, masses))
 
-def ads_mass(v_matrix, reaction_type, NC_sur, masses):
+def ads_mass(v_matrix, reaction_type, NC_sur, NC_acid, NC_base, masses):
     """
     Return the mass of the adsorbates for each elementary reaction.
     Args:
@@ -319,7 +333,7 @@ def ads_mass(v_matrix, reaction_type, NC_sur, masses):
         m(list): when not zero, item i represents the MW of the adsorbate in reaction R[i+1]
     """
     NR = v_matrix.shape[1]
-    NC_gas = v_matrix.shape[0] - NC_sur - 1
+    NC_gas = v_matrix.shape[0] - NC_sur - NC_acid - NC_base
     m = [0] * NR   
     for i in range(NR):
         if reaction_type[i] == 'sur':
