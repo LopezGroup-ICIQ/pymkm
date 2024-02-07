@@ -38,7 +38,7 @@ run = mkm.kinetic_run(T, P, yin)
 The default reactor model is a zero-conversion differential reactor, which provides as output the steady-state surface coverages, reaction rates and selectivity. This reactor model can be used additionally to get apparent activation energy and reaction orders.
 
 ## License
-Pymkm is released under the MIT License.
+Pymkm is released under the [MIT](./LICENSE) License.
 
 ## Author
 Santiago Morandi (ICIQ)
