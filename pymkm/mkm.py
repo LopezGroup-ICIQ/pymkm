@@ -9,7 +9,7 @@ import pandas as pd
 from scipy.integrate import solve_ivp
 
 from pymkm.constants import cf, K_B, R
-from pymkm.functions import net_rate, stoic_backward, stoic_forward, kinetic_coeff, calc_eapp, calc_reac_order
+from pymkm.functions import net_rate, stoic_backward, stoic_forward, kinetic_coeff, calc_eapp, calc_reac_order, z_calc
 from pymkm.g_parser import *
 from pymkm.reactor import DifferentialPFR, DynamicCSTR
 from pymkm.rm_parser import *
@@ -32,7 +32,12 @@ class MicrokineticModel:
         inerts(list): Inert species in the system under study. The list contains the species name as strings.
     """
 
-    def __init__(self, name: str, rm_input: str, g_input: str, t_ref: float=273.15, inerts: list=[]):
+    def __init__(self, 
+                 name: str, 
+                 rm_input: str, 
+                 g_input: str, 
+                 t_ref: float=273.15, 
+                 inerts: list=[]):
         self.name = name
         self.t_ref = t_ref
         self.reactor_model = "differential"
