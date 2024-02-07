@@ -13,17 +13,17 @@
 
 Pymkm is a software for building microkinetic models for heterogeneous catalytic applications.
 
-- Thermal catalysis: Steady-state reaction rates, surface coverage, apparent activation energy and reaction orders, descriptor search via degree of rate control and reversibility analysis.
+- Thermal catalysis: Steady-state reaction rates, surface coverage, apparent activation energy and reaction orders, degree of rate control and reversibility analysis.
 - Electro-catalysis: Steady-state current density, Tafel plots.
 
 ## Usage
 
-To run microkinetic models with pymkm, two input files are required: `rm.mkm`, listing the global and elementary reactions defining the system under study, and `g.mkm` providing the energy of the intermediates and activation barrier of the elementary reactions, values typically obtained with density functional theory (DFT). Once defined you can instantiate a microkinetic model with the following snippet:
+To run microkinetic models with pymkm, two input plain text files are required: `rm.mkm`, listing the global and elementary reactions defining the system under study, and `g.mkm` providing the energy of the intermediates and activation barrier of the elementary reactions, values typically obtained with density functional theory (DFT). Once defined you can instantiate a microkinetic model with the following snippet:
 
 ```python
 from pymkm import MicrokineticModel
 
-mkm = MicrokineticModel('systemID', 'rm.mkm', 'g.mkm')
+mkm = MicrokineticModel('case_study_name', 'rm.mkm', 'g.mkm')
 ```
 
 To run a simulation at specific operating conditions (T, P, inlet gas_compostion):
@@ -32,7 +32,7 @@ To run a simulation at specific operating conditions (T, P, inlet gas_compostion
 T = 573  # K
 P = 20E5  # Pa 
 yin = [0.8,0.2,0,0,0]  # molar fractions of the gas-phase input
-run = model.kinetic_run(T, P, yin)
+run = mkm.kinetic_run(T, P, yin)
 ```
 
 The default reactor model is a zero-conversion differential reactor, which provides as output the steady-state surface coverages, reaction rates and selectivity. This reactor model can be used additionally to get apparent activation energy and reaction orders.
@@ -41,10 +41,10 @@ The default reactor model is a zero-conversion differential reactor, which provi
 Pymkm is released under the MIT License.
 
 ## Author
-Santiago Morandi (ICIQ).
+Santiago Morandi (ICIQ)
 
 ## Contributors
-Albert Sabadell-Rendon (ICIQ), Sergio Pablo-García (ICIQ), Ranga Rohit Seemakurthi (ICIQ).
+Albert Sabadell-Rendon (ICIQ), Ranga Rohit Seemakurthi (ICIQ)
 
 ## References
 
