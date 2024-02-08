@@ -342,7 +342,7 @@ class MicrokineticModel:
             dy,
             (0.0, t_final),
             y_0,
-            method="BDF",
+            method="BDF",  # Method must be optimized for stiff systems
             events=end_events,
             jac=jacobian_matrix,
             args=tuple(ode_params),
@@ -436,7 +436,7 @@ class MicrokineticModel:
             self.reactor.ode,
             *list(self.ODE_params.values()),
             ode_params,
-            end_events=self.reactor.termination_event,
+            end_events=self.reactor.steady_state,
             jacobian_matrix=self.reactor.jacobian
         )
         final_y = results.y[:, -1]

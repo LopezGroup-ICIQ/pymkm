@@ -33,10 +33,10 @@ class ReactorModel(ABC):
         ...
 
     @abstractmethod
-    def termination_event(self):
+    def steady_state(self):
         """
-        Defines the criteria needed to stop the integration. Typically,
-        the termination occurs when steady-state conditions are reached.
+        Defines the criteria needed to stop the integration. Termination
+        occurs when steady-state conditions are reached.
         """
         ...
 
@@ -66,7 +66,7 @@ class DifferentialPFR(ReactorModel):
     def __init__(self, ss_tol: float = 1e-10):
         """
         Differential Plug-Flow Reactor (PFR)
-        Main assumptions of the reactor model:
+        Main assumptions:
             - Isothermal, isobaric
             - Steady-state conditions
             - Finite volume
@@ -80,9 +80,7 @@ class DifferentialPFR(ReactorModel):
         self.ss_tol = ss_tol
 
     def ode(self, time, y, kd, ki, v_matrix, NC_sur) -> np.ndarray:
-        # Surface species
         dy = v_matrix @ net_rate(y, kd, ki, v_matrix)
-        # Gas species
         dy[NC_sur:] = 0
         return dy
 
@@ -114,12 +112,12 @@ class DifferentialPFR(ReactorModel):
         J[NC_sur:, :] = 0.0
         return J
 
-    def termination_event(self, time, y, kd, ki, v_matrix, NC_sur):
-        error = np.sum(abs(self.ode(time, y, kd, ki, v_matrix, NC_sur)))
-        criteria = 0 if error <= self.ss_tol else error
-        return criteria
+    def steady_state(self, time, y, kd, ki, v_matrix, NC_sur):
+        sum_ddt = np.sum(abs(self.ode(time, y, kd, ki, v_matrix, NC_sur)))
+        return 0 if sum_ddt <= self.ss_tol else 1
 
-    termination_event.terminal = True
+    steady_state.terminal = True
+    steady_state.direction = 0
 
     def conversion(self, P_in, P_out) -> float:
         return 1 - (P_out / P_in)
@@ -174,9 +172,7 @@ class DynamicCSTR(ReactorModel):
         self.ss_tol = ss_tol
 
     def ode(self, time, y, kd, ki, v_matrix, NC_sur, temperature, P_in):
-        # Surface species
         dy = v_matrix @ net_rate(y, kd, ki, v_matrix)
-        # Gas species
         dy[NC_sur:] *= R * temperature / (N_AV * self.volume)
         dy[NC_sur:] *= self.s_bet * self.m_cat / self.a_site
         dy[NC_sur:] += (P_in - y[NC_sur:]) / self.tau
@@ -214,14 +210,14 @@ class DynamicCSTR(ReactorModel):
             J[NC_sur + i, NC_sur + i] -= 1 / self.tau
         return J
 
-    def termination_event(self, time, y, kd, ki, v_matrix, NC_sur, temperature, P_in):
-        error = np.sum(
-            abs(self.ode(time, y, kd, ki, v_matrix, NC_sur, temperature, P_in))
+    def steady_state(self, time, y, kd, ki, v_matrix, NC_sur, T, P_in):
+        sum_ddt = np.sum(
+            abs(self.ode(time, y, kd, ki, v_matrix, NC_sur, T, P_in))
         )
-        criteria = 0 if error <= self.ss_tol else error
-        return criteria
+        return 0 if sum_ddt <= self.ss_tol else 1
 
-    termination_event.terminal = True
+    steady_state.terminal = True
+    steady_state.direction = 0
 
     def conversion(self, gas_reactant_index, P_in, P_out):
         """

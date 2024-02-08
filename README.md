@@ -18,7 +18,7 @@ Pymkm is a software for building microkinetic models for heterogeneous catalytic
 
 ## Usage
 
-To run microkinetic models with pymkm, two input plain text files are required: `rm.mkm`, listing the global and elementary reactions defining the system under study, and `g.mkm` providing the energy of the intermediates and activation barrier of the elementary reactions, values typically obtained with density functional theory (DFT). Once defined you can instantiate a microkinetic model with the following snippet:
+To run microkinetic models with pymkm, two input plain text files are required: `rm.mkm`, listing the global and elementary reactions defining the system under study, and `g.mkm` providing the energy of the intermediates and activation barrier of the elementary reactions, values typically obtained with density functional theory (DFT). Examples of input files structure and definition can be found in the `examples` folder. Once defined, a microkinetic model can be instantiated:
 
 ```python
 from pymkm import MicrokineticModel
@@ -26,7 +26,7 @@ from pymkm import MicrokineticModel
 mkm = MicrokineticModel('case_study_name', 'rm.mkm', 'g.mkm')
 ```
 
-To run a simulation at specific operating conditions (T, P, inlet gas_compostion):
+To run a simulation at specific operating conditions of temperature, pressure and inlet gas composition:
 
 ```python
 T = 573  # K
@@ -35,7 +35,7 @@ yin = [0.8,0.2,0,0,0]  # molar fractions of the gas-phase input
 run = mkm.kinetic_run(T, P, yin)
 ```
 
-The default reactor model is a zero-conversion differential reactor, which provides as output the steady-state surface coverages, reaction rates and selectivity. This reactor model can be used additionally to get apparent activation energy and reaction orders.
+The default reactor model is a zero-conversion differential reactor `DifferentialPFR` model, which provides as output the steady-state surface coverages, reaction rates and selectivity. This reactor model can be used additionally to get apparent activation energy and reaction orders. To get more quantitative information such as conversion and yield, the `DynamicCSTR` model is available, but this requires providing information as volume, inlet flow rate, catalyst mass, etc.
 
 ## License
 Pymkm is released under the [MIT](./LICENSE) License.
