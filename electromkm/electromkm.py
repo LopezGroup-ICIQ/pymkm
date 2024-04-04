@@ -151,12 +151,18 @@ class electroMKM:
                     index_a = self.species_tot.index('H(e)')
                     z_i_a = self.v_matrix[index_a, reaction]
                     dg_F_reaction[reaction] = self.dg_reaction[reaction] - z_i_a * U - z_i_a * 2.3 * K_B * T * pH
-                    dg_F_barrier[reaction] = self.dg_barrier[reaction] - self.alfa[reaction] * z_i_a * U - z_i_a * 2.3 * K_B * T * pH
+                    if z_i_a<0:
+                        dg_F_barrier[reaction] = self.dg_barrier[reaction] - self.alfa[reaction] * z_i_a * U - z_i_a * 2.3 * K_B * T * pH
+                    elif z_i_a>0:
+                        dg_F_barrier[reaction] = self.dg_barrier[reaction] + self.alfa[reaction] * z_i_a * U - z_i_a * U
                 elif 'b_e' in self.reaction_type[reaction]:
                     index_b = self.species_tot.index('H2O(e)')
                     z_i_b = self.v_matrix[index_b, reaction]
                     dg_F_reaction[reaction] = self.dg_reaction[reaction] - z_i_b * U - z_i_b * 2.3 * K_B * T * pH
-                    dg_F_barrier[reaction] = self.dg_barrier[reaction] - self.alfa[reaction] * z_i_b * U                     
+                    if z_i_b<0:
+                        dg_F_barrier[reaction] = self.dg_barrier[reaction] - self.alfa[reaction] * z_i_b * U     
+                    elif z_i_b>0:
+                        dg_F_barrier[reaction] = self.dg_barrier[reaction] + self.alfa[reaction] * z_i_b * U - z_i_b * U - z_i_b * 2.3 * K_B * T * pH                                          
             else:
                 dg_F_reaction[reaction] = self.dg_reaction[reaction]
                 dg_F_barrier[reaction] = self.dg_barrier[reaction]
