@@ -1,0 +1,10 @@
+conda create -n jupyter
+conda install -n jupyter python=3.6
+conda install -n jupyter -c anaconda jupyter
+conda install -n jupyter numpy
+conda install -n jupyter pandas
+conda install -n jupyter scipy
+conda install -n jupyter -c conda-forge matplotlib
+conda install -n jupyter -c anaconda natsort
+conda install -n jupyter scikit-learn
+conda install -n jupyter -c conda-forge python-graphviz

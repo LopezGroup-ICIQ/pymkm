@@ -1,0 +1,1017 @@
+"""electroMKM class for electrocatalysis."""
+
+import time
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
+from constants import *
+from functions import *
+from rm_parser import *
+from g_parser import *
+from matplotlib import rcParams
+rcParams['font.family'] = 'sans-serif'
+rcParams['font.sans-serif'] = ['Arial']
+rcParams.update({'font.size': 14})
+
+class electroMKM:
+    """
+    A class for representing microkinetic models for electrocatalysis. 
+    It provides functions for obtaining information as reaction rates (current density),
+    steady-state surface coverage.
+    Attributes: 
+        name(string): Name of the system under study.
+        rm_input_file(string): Path to the .mkm file containing the reaction mechanism.
+        g_input_file(string): Path to the .mkm file containing the energy values for TS, surface
+                              and gas species.   
+        reactor_model(string): reactor model used for representing the system under study. 
+                               Two available options:
+                                   "differential": differential PFR, zero conversion model
+                                   "dynamic": dynamic CSTR, integral model (finite conversion)
+        t_ref(float): Reference temperature at which entropic contributions have been calculated [K].
+        inerts(list): Inert species in the system under study. The list contains the species name as strings.
+    """
+    def __init__(self,
+                 name: int,
+                 rm_input,
+                 g_input,
+                 t_ref: float=298.15,
+                 inerts: list=[]):
+
+        self.name = name
+        self.input_rm = rm_input
+        self.input_g = g_input
+        self.t_ref = t_ref
+        self.reactor_model = 'differential'
+        self.inerts = inerts
+        self.ODE_params = {'reltol':1e-12, 'abstol': 1e-64, 'tfin': 1e3}
+        # rm.mkm parsing -> Reaction mechanism
+        rm_lines = preprocess_rm(rm_input)
+        self.NGR, self.NR = get_NGR_NR(rm_lines)
+        self.r = ['R{}'.format(i+1) for i in range(self.NR)]
+        self.gr = ['GR{}'.format(i+1) for i in range(self.NGR)]
+        #print(rm_lines)
+        global_reaction_label = [rm_lines[reaction].split()[0] for reaction in range(self.NGR)]
+        self.global_reaction_label=global_reaction_label
+        global_reaction_index = [int(rm_lines[reaction].split()[1][:-1]) for reaction in range(self.NGR)]
+        global_PCET = np.zeros(self.NGR)
+        for reaction in range(self.NGR):
+            if 'H(e)' in rm_lines[reaction]:
+                global_PCET[reaction]=int(rm_lines[reaction][rm_lines[reaction].find("H(e)") - 1])
+            elif 'H2O(e)' in rm_lines[reaction]:
+                global_PCET[reaction]=int(rm_lines[reaction][rm_lines[reaction].find("H2O(e)") - 1])
+        
+        self.grl_pcet={}
+        for id, i in enumerate(global_reaction_label):
+            self.grl_pcet[i]=[global_reaction_index[id],global_PCET[id],1]
+        
+        global_cation = []
+        self.g_cation='X'
+        for reaction in range(self.NGR):
+            if '(cat)' in rm_lines[reaction]:
+                index_of_cat = rm_lines[reaction].find("(cat)")
+                i = index_of_cat - 1
+                cation_name = ""
+                while i >= 0 and rm_lines[reaction][i] != ' ':
+                    cation_name = rm_lines[reaction][i] + cation_name
+                    i -= 1
+                #print(cation_name)
+                global_cation.append(cation_name)
+                self.g_cation=cation_name
+            else:
+                global_cation.append('X')        
+        self.gr_string = [" ".join(rm_lines[reaction].split()[2:]) for reaction in range(self.NGR)]
+        self.target = global_reaction_index[0]
+        self.target_label = global_reaction_label[0]
+        self.by_products = global_reaction_index[1:]
+        self.by_products_label = global_reaction_label[1:]
+        self.grl = dict(zip(global_reaction_label, global_reaction_index))
+        self.gr_dict = dict(zip(global_reaction_label, self.gr_string))
+        self.gpcet_dict = dict(zip(global_reaction_label, global_PCET))
+        self.gcation_dict = dict(zip(global_reaction_label, global_cation))
+        self.reaction_type = reaction_type(rm_lines, self.NR, self.NGR)
+        self.species_sur, self.species_gas, self.species_acid, self.species_base, self.species_cation, self.species_tot = classify_species(get_species_label(rm_lines, self.NGR, inerts))
+        #print(self.species_tot)
+        self.NC_sur, self.NC_gas, self.NC_acid, self.NC_base,  self.NC_cation, self.NC_tot = get_NC(self.species_sur, self.species_gas, self.species_acid, self.species_base, self.species_cation, self.species_tot)
+        self.v_matrix = stoich_matrix(rm_lines, self.NR, self.NGR, self.species_tot) #dont know if a change is required
+        self.v_f = stoic_forward(self.v_matrix).T
+        self.v_b = stoic_backward(self.v_matrix).T
+        self.MW = gas_MW(self.species_gas)                                                      
+        self.m = ads_mass(self.v_matrix, self.reaction_type, self.NC_sur, self.NC_acid, self.NC_base, self.NC_cation, list(self.MW.values()))
+        self.v_global = global_v_matrix(self.NC_tot, self.NGR, self.gr_string, self.species_tot, self.NC_sur, self.species_gas)
+        self.stoich_numbers = stoich_numbers(self.NR, self.NGR, self.v_matrix, self.v_global)
+        # g.mkm parsing -> Energetics
+        self.h_species, self.s_species, self.g_species = species_energy(preprocess_g(g_input), self.NR, t_ref, self.species_tot, inerts)
+        #print(self.h_species[self.NC_sur+self.NC_cation]*1E5)
+        self.alfa = chg_coeffient(preprocess_g(g_input), self.NR)
+        self.h_ts, self.s_ts, self.g_ts= ts_energy(preprocess_g(g_input), self.NR, t_ref)
+        self.dh_reaction, self.ds_reaction, self.dg_reaction = reaction_energy(self.v_matrix, self.h_species, self.s_species, t_ref)
+        self.dh_barrier, self.dh_barrier_rev = h_barrier(self.v_matrix, self.h_ts, self.h_species, self.dh_reaction)
+        self.ds_barrier, self.ds_barrier_rev = s_barrier(self.v_matrix, self.s_ts, self.s_species, self.ds_reaction)
+        self.dg_barrier, self.dg_barrier_rev = g_barrier(self.v_matrix, self.g_ts, self.g_species, self.dg_reaction)
+        # Pandas DataFrames
+        self.df_system = pd.DataFrame(self.v_matrix, index=self.species_sur+self.species_acid+self.species_base+self.species_cation+self.species_gas,
+                                      columns=[self.r, self.reaction_type])
+        self.df_system.index.name = 'species'
+        self.df_gibbs = pd.DataFrame(np.array([self.dg_reaction,
+                                               self.dg_barrier,
+                                               self.dg_barrier_rev]).T,
+                                     index=[self.r, self.reaction_type],
+                                     columns=['DGR / eV',
+                                              'DG barrier / eV',
+                                              'DG reverse barrier / eV'])
+        self.df_gibbs.index.name = 'reaction'
+
+    def __str__(self):
+        info = "System: {}\n".format(self.name)
+        for i in self.gr_string:
+            info += i+"\n"
+        info += "Number of global reactions: {}\n".format(self.NGR)
+        info += "Number of elementary reactions: {}\n".format(self.NR)
+        info += "Number of surface species: {}\n".format(self.NC_sur)
+        info += "Number of gas species: {}\n".format(self.NC_gas)
+        return info
+        
+    def set_ODE_params(self, t_final=1000.0, reltol=1e-12, abstol=1e-64):
+        """
+        Set parameters for numerical integration of ODE solvers.
+        Args:
+            t_final(float): total integration time [s]
+            reltol(float): relative tolerance 
+            abstol(float): absolute tolerance
+        """
+        self.ODE_params["reltol"] = reltol
+        self.ODE_params["abstol"] = abstol
+        self.ODE_params["tfin"] = t_final
+        print("Final integration time = {}s".format(t_final))
+        print("Relative tolerance = {}".format(reltol))
+        print("Absolute tolerance = {}".format(abstol))
+        return "Changed ODE solver parameters."
+
+    def get_reaction_energetics(self, overpotential, pH, potential_dl, temperature):
+        """
+        Gets the reaction energetics based on the specified overpotential and pH. The energetics of electrochemical steps containing the H(e) reactant are modified.               
+        Args: 
+            overpotential(float): applied overpotential [V].
+            pH (float): pH of the electrolyte [unitless]
+            potential_dl (float): potential difference across double layer [V]
+            temperature(float): absolute temperature [K].
+        Returns:
+            (list): list with 3 ndarrays for of reaction energetics and barriers.
+        """
+        #print(self.dg_reaction)
+
+        dg_F_reaction = np.zeros(len(self.dg_reaction))
+        dg_F_barrier = np.zeros(len(self.dg_barrier))
+        dg_F_barrier_rev = np.zeros(len(self.dg_barrier_rev))
+
+        #print(dg_F_reaction)
+
+        for reaction in range(self.NR):
+            if '_e' in self.reaction_type[reaction]:
+            #if self.reaction_type[reaction] != 'ads' and self.reaction_type[reaction] != 'des' and self.reaction_type[reaction] != 'sur':
+                if 'a_e' in self.reaction_type[reaction]:
+                    index_a = self.species_tot.index('H(e)')
+                    z_i_a = self.v_matrix[index_a, reaction]
+                #print(self.alfa[reaction] * z_i * overpotential)
+                    dg_F_reaction[reaction] = self.dg_reaction[reaction] - z_i_a * overpotential - z_i_a * 2.3 * K_B * temperature * pH
+                    dg_F_barrier[reaction] = self.dg_barrier[reaction] - self.alfa[reaction] * z_i_a * overpotential - z_i_a * 2.3 * K_B * temperature * pH
+                elif 'b_e' in self.reaction_type[reaction]:
+                    index_b = self.species_tot.index('H2O(e)')
+                    z_i_b = self.v_matrix[index_b, reaction]
+                #print(self.alfa[reaction] * z_i * overpotential)
+                    dg_F_reaction[reaction] = self.dg_reaction[reaction] - z_i_b * overpotential - z_i_b * 2.3 * K_B * temperature * pH
+                    dg_F_barrier[reaction] = self.dg_barrier[reaction] - self.alfa[reaction] * z_i_b * overpotential                     
+            else:
+                dg_F_reaction[reaction] = self.dg_reaction[reaction]
+                dg_F_barrier[reaction] = self.dg_barrier[reaction]
+            if 'cat' in self.reaction_type[reaction]:
+                for index_each in range(len(self.species_tot)):
+                    if 'cat' in self.species_tot[index_each]:
+                        index_cation=index_each
+                #print(reaction,dg_F_reaction[reaction],dg_F_barrier[reaction])
+                z_i_cation = self.v_matrix[index_cation, reaction]                
+                dg_F_reaction[reaction] =  dg_F_reaction[reaction] + z_i_cation * (potential_dl/10)
+                dg_F_barrier[reaction] =   dg_F_barrier[reaction] + z_i_cation * (potential_dl/10)
+                # potential_diff=(overpotential/10)
+                # cation_ads_ener=-self.h_species[index_cation]- z_i_cation * potential_diff
+                # K_cation_ads = np.exp(-cation_ads_ener/(K_B*temperature))
+                # site_adj_factor = K_cation_ads*cation_conc / (1+K_cation_ads*cation_conc)         
+                # #print(cation_ads_ener)
+                # if cation_ads_ener>0.07:
+                #     dg_F_reaction[reaction] =  dg_F_reaction[reaction] - z_i_cation * potential_diff
+                #     dg_F_barrier[reaction] =   dg_F_barrier[reaction] - z_i_cation * potential_diff
+                # else:
+                #     dg_F_reaction[reaction] =  dg_F_reaction[reaction] + (self.h_species[index_cation]+0.07)
+                #     dg_F_barrier[reaction] =   dg_F_barrier[reaction] + (self.h_species[index_cation]+0.07)
+                #print(reaction,dg_F_reaction[reaction],dg_F_barrier[reaction]) 
+            if dg_F_barrier[reaction] < 0:
+                dg_F_barrier[reaction] = 0
+            dg_F_barrier_rev[reaction] = dg_F_barrier[reaction] - dg_F_reaction[reaction]
+            
+            self.df_gibbs_e = pd.DataFrame(np.array([dg_F_reaction,
+                                               dg_F_barrier,
+                                               dg_F_barrier_rev]).T,
+                                     index=[self.r, self.reaction_type],
+                                     columns=['DGR_e / eV',
+                                              'DG barrier_e / eV',
+                                              'DG reverse barrier_e / eV'])
+        return dg_F_reaction, dg_F_barrier, dg_F_barrier_rev
+
+
+    def kinetic_coeff(self, overpotential, pH, potential_dl, temperature, area_active_site=1e-19):
+        """
+        Returns the kinetic coefficient for the direct and reverse reactions, according to 
+        the reaction type (adsorption, desorption or surface reaction) and TST.
+        Revisited from pymkm for electrocatalysis.                
+        Args: 
+            overpotential(float): applied overpotential [V].
+            temperature(float): absolute temperature [K].
+            A_site_0(float): Area of the catalytic ensemble [m2]. Default: 1e-19[m2].
+        Returns:
+            (list): list with 2 ndarrays for direct and reverse kinetic coefficients.
+        """
+        Keq = np.zeros(self.NR)  # Equilibrium constant
+        kd = np.zeros(self.NR)   # Direct constant
+        kr = np.zeros(self.NR)   # Reverse constant
+
+        dg_F_reaction, dg_F_barrier, dg_F_barrier_rev = self.get_reaction_energetics(overpotential,pH,potential_dl, temperature)
+
+        for reaction in range(self.NR):
+            Keq[reaction] = np.exp(-dg_F_reaction[reaction] / (temperature * K_B))
+            if self.reaction_type[reaction] == 'ads':
+                kd[reaction] = (K_B * temperature / H) * np.exp(-dg_F_barrier[reaction] / temperature / K_B)
+                kr[reaction] = kd[reaction] / Keq[reaction]
+            elif self.reaction_type[reaction] == 'des':
+                kd[reaction] = (K_B * temperature / H) * \
+                    np.exp(-dg_F_barrier[reaction] / temperature / K_B)
+                kr[reaction] = kd[reaction] / Keq[reaction]
+            else:
+                kd[reaction] = (K_B * temperature / H) * np.exp(-dg_F_barrier[reaction] / temperature / K_B)
+                kr[reaction] = kd[reaction] / Keq[reaction]
+            '''
+            elif self.reaction_type[reaction] == 'sur':  
+                kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
+                kr[reaction] = kd[reaction] / Keq[reaction]
+            else: # Charge transfer reaction
+                f = F / (R * temperature)  # C/J
+                index = self.species_tot.index('H(e)')
+                if self.v_matrix[index, reaction] < 0: # Reduction (e- in the lhs of the reaction)
+                    kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
+                    kd[reaction] *= np.exp(- self.alfa[reaction] * f * overpotential)
+                    Keq[reaction] *= np.exp(-f * overpotential)
+                    kr[reaction] = kd[reaction] / Keq[reaction]
+                else: # Oxidation (e- in the rhs of the reaction)
+                    kd[reaction] = (K_B * temperature / H) * np.exp(-self.dg_barrier[reaction] / temperature / K_B)
+                    kd[reaction] *= np.exp((1 - self.alfa[reaction]) * f * overpotential)
+                    Keq[reaction] *= np.exp(f * overpotential)
+                    kr[reaction] = kd[reaction] / Keq[reaction]
+                '''
+        #print(Keq)
+        return kd, kr
+
+    def differential_pfr(self, time, y, kd, ki):
+        """
+        Returns the rhs of the ODE system.
+        Reactor model: differential PFR (zero conversion)
+        """
+        # Surface species
+        dy = self.v_matrix @ net_rate(y, kd, ki, self.v_f, self.v_b)
+        # Gas species and H+
+        dy[self.NC_sur:] = 0.0
+        return dy
+
+    def jac_diff(self, time, y, kd, ki):
+        """
+        Returns the analytical Jacobian matrix of the system for
+        the differential reactor model.
+        """
+        J = np.zeros((len(y), len(y)))
+        Jg = np.zeros((len(kd), len(y)))
+        Jh = np.zeros((len(kd), len(y)))
+        v_f = self.v_f.T
+        v_b = self.v_b.T
+        for r in range(len(kd)):
+            for s in range(len(y)):
+                if v_f[s, r] == 1:
+                    v_f[s, r] -= 1
+                    Jg[r, s] = kd[r] * np.prod(y ** v_f[:, r])
+                    v_f[s, r] += 1
+                elif v_f[s, r] == 2:
+                    v_f[s, r] -= 1
+                    Jg[r, s] = 2 * kd[r] * np.prod(y ** v_f[:, r])
+                    v_f[s, r] += 1
+                if v_b[s, r] == 1:
+                    v_b[s, r] -= 1
+                    Jh[r, s] = ki[r] * np.prod(y ** v_b[:, r])
+                    v_b[s, r] += 1
+                elif v_b[s, r] == 2:
+                    v_b[s, r] -= 1
+                    Jh[r, s] = 2 * ki[r] * np.prod(y ** v_b[:, r])
+                    v_b[s, r] += 1
+        J = self.v_matrix @ (Jg - Jh)
+        J[self.NC_sur:, :] = 0
+        return J
+
+    def __ode_solver_solve_ivp(self,
+                               y_0,
+                               dy,
+                               temperature, 
+                               overpotential,
+                               pH,
+                               potential_dl,
+                               reltol,
+                               abstol,
+                               t_final,
+                               end_events=None,
+                               jacobian_matrix=None):
+        """
+        Helper function for solve_ivp ODE solver.
+        """
+        kd, ki = self.kinetic_coeff(overpotential, pH, potential_dl, temperature)
+        args_list = [kd, ki]
+        r = solve_ivp(dy,
+                      (0.0, t_final),
+                      y_0,
+                      method='BDF', 
+                      events=end_events,
+                      jac=jacobian_matrix,
+                      args=args_list,
+                      atol=abstol,
+                      rtol=reltol,
+                      max_step=t_final)
+        return r
+
+    def cation_site_adj_factor(self,
+                          potential_dl : float,     
+                          cation_conc: float,
+                          cation_ener_error:float,
+                          temperature: float):
+        
+        """used for correcting the active sites corresponding to cation concentration"""
+        
+        #cation_ads_ener=-self.h_species[self.NC_sur+self.NC_cation]*1E5-(potential_dl/5)
+        cation_ads_ener_array = {'Li+':0.52,'K+':0.38,'Cs+':0.37}
+        adj_factor_array=[]
+        for cation in list(self.gcation_dict.values()):
+            #print(cation)
+            if cation != 'X':
+                cation_ads_ener=cation_ads_ener_array[cation]+cation_ener_error-(potential_dl/10)
+                K_cation_ads = np.exp(-cation_ads_ener/(K_B*temperature))
+                site_adj_factor = K_cation_ads*cation_conc / (1+K_cation_ads*cation_conc)
+                #print('cation_ads_ener: {:.2f}, site_adj_factor: {:.3f}'.format(cation_ads_ener,site_adj_factor))
+                if site_adj_factor>0.1:
+                    site_adj_factor=0.1
+                #print(site_adj_factor)
+            else:
+                site_adj_factor=1
+            adj_factor_array.append(site_adj_factor)
+        return adj_factor_array
+
+    def kinetic_run(self,
+                    overpotential: float,
+                    pH: float,
+                    cation_conc: float,
+                    potential_dl: float,
+                    cation_ener_error : float,
+                    initial_sur_coverage: list=None,
+                    temperature: float=298.0,
+                    pressure: float =1e5,
+                    gas_composition: np.ndarray=None,
+                    verbose: int=0,
+                    jac: bool=False):
+        """
+        Simulates a steady-state electrocatalytic run at the defined operating conditions.        
+        Args:
+            overpotential(float): applied overpotential [V vs SHE].
+            pH(float): pH of the electrolyte solution [-].
+            cation_conc(float): cation_conc at OHP [M]
+            potential_dl (float): potential difference across double layer [V]
+            temperature(float): Temperature of the system [K].
+            pressure(float): Absolute pressure of the system [Pa].
+            initial_conditions(nparray): Initial surface coverage array[-].
+            verbose(int): 0=print all output; 1=print nothing.        
+        Returns:
+            (dict): Report of the electrocatalytic simulation.        
+        """
+        overpotential_RHE = overpotential + 0.059*pH
+        if verbose == 0:
+            print('{}: Microkinetic run'.format(self.name))
+            print('Overpotential = {}V vs SHE    pH = {}'.format(overpotential, pH))
+            print('Overpotential = {}V vs RHE'.format(overpotential_RHE))
+            print('Temperature = {}K    Pressure = {:.1f}bar'.format(temperature, pressure/1e5))
+        # ODE initial conditions
+        y_0 = np.zeros(self.NC_tot)
+        # 1) surface coverage
+        if initial_sur_coverage is None:  # First surface species is the active site
+            y_0[0] = 1.0 
+        else:
+            sum = np.sum(initial_sur_coverage)
+            condition2 = True in [(initial_sur_coverage[i] < 0.0) for i in range(len(initial_sur_coverage))] 
+            if sum != 1.0 or condition2:
+                raise ValueError('Wrong initial surface coverage: Sum must equal to 1 and values >= 0)')
+            y_0[:self.NC_sur] = initial_sur_coverage
+        # 2) H+ activity (defined by pH)
+        if self.NC_acid!=0:
+            y_0[self.NC_sur-1+self.NC_acid] = 10 ** (-0)
+        if self.NC_base!=0:
+            y_0[self.NC_sur-1+self.NC_acid+self.NC_base] = 10 ** (-0)
+        if self.NC_cation!=0:
+            #y_0[self.NC_sur+self.NC_cation] = 10 ** (-0)
+            y_0[self.NC_sur-1+self.NC_acid+self.NC_base+self.NC_cation] = cation_conc
+        # 3) gas composition
+        if gas_composition is None:
+            y_0[self.NC_sur+self.NC_cation+self.NC_acid+self.NC_base:] = pressure / 1e5 
+        else:
+            y_0[self.NC_sur+self.NC_cation+self.NC_acid+self.NC_base:] = pressure * gas_composition / 1e5
+        #print(y_0)
+        #-----------------------------------------------------------------------------------------------        
+        if temperature < 0.0:
+            raise ValueError('Wrong temperature (T > 0 K)')
+        if pressure < 0.0:
+            raise ValueError('Wrong pressure (P > 0 Pa)')
+        if pH < 0.0 or pH > 14:
+            raise ValueError('Wrong pH definition (0 < pH < 14)')
+        #-----------------------------------------------------------------------------------------------
+        results_sr = []                      # solver output
+        final_sr = []                        # final Value of derivatives
+        yfin_sr = np.zeros((self.NC_tot))    # steady-state output [-]
+        r_sr = np.zeros((self.NR))           # reaction rate [1/s]
+        s_target_sr = np.zeros(1)            # selectivity
+        t0 = time.time()
+        keys = ['T',
+                'P',
+                'theta',
+                'ddt',
+                'r',
+                *['r_{}'.format(i) for i in list(self.grl.keys())],
+                *['j_{}'.format(i) for i in list(self.grl.keys())],
+                'S_{}'.format(self.target_label),
+                'MASI',
+                'solver']
+        r = ['R{}'.format(i+1) for i in range(self.NR)]
+        values = [temperature, pressure / 1e5]
+        _ = None
+        if jac: 
+            _ = self.jac_diff
+        results_sr = self.__ode_solver_solve_ivp(y_0,
+                                                 self.differential_pfr,
+                                                 temperature,
+                                                 overpotential,
+                                                 pH,
+                                                 potential_dl,
+                                                 *list(self.ODE_params.values()),
+                                                 end_events=None,
+                                                 jacobian_matrix=_)
+        final_sr = self.differential_pfr(results_sr.t[-1],
+                                         results_sr.y[:, -1],
+                                         *self.kinetic_coeff(overpotential, pH, potential_dl,
+                                                             temperature))
+        #print(results_sr.y[:, -1])
+        yfin_sr = results_sr.y[:self.NC_sur, -1]
+        #print(results_sr.y[:self.NC_sur+1, -1])
+        #cation_dict=self.gcation_dict
+        adjust_factor_array=self.cation_site_adj_factor(potential_dl,cation_conc,cation_ener_error,temperature)
+        #print('final adjust_factor is :',adjust_factor_array)
+        for index,label in enumerate(self.global_reaction_label):
+            self.grl_pcet[label][2]=(adjust_factor_array[index])
+        r_sr = net_rate(results_sr.y[:, -1],
+                        *self.kinetic_coeff(overpotential, pH, potential_dl,
+                                            temperature),
+                        self.v_f, 
+                        self.v_b)
+        j_sr = -r_sr *  F / (N_AV * 1.0E-19) #sites per unit area
+        #j_sr = -r_sr * adjust_factor * F / (N_AV * 1.0E-19) #sites per unit area
+        bp = list(set(self.by_products))
+        s_target_sr = r_sr[self.target] / (r_sr[self.target] + r_sr[bp].sum())
+        value_masi = max(yfin_sr[:self.NC_sur])
+        key_masi = self.species_sur[np.argmax(yfin_sr[:self.NC_sur])]
+        masi_sr = {key_masi: value_masi}
+        coverage_dict = dict(zip(self.species_sur, yfin_sr))
+        ddt_dict = dict(zip(self.species_tot, final_sr))
+        r_dict = dict(zip(r, r_sr))
+        values += [coverage_dict,
+                   ddt_dict,
+                   r_dict,
+                   *[r_sr[i] for i in list(self.grl.values())],
+                   *[array[1]*array[2]*j_sr[array[0]] for array in list(self.grl_pcet.values())],
+                   s_target_sr,
+                   masi_sr,
+                   results_sr]
+        output_dict = dict(zip(keys, values))
+        if verbose == 0:
+            print('')
+            print('{} Current density: {:0.2e} mA cm-2'.format(self.target_label,
+                                                               output_dict[str('j_'+self.target_label)]/10))
+            print('{} Selectivity: {:.2f}%'.format(self.target_label,
+                                                   s_target_sr*100.0))
+            print('Most Abundant Surface Intermediate: {} Coverage: {:.2f}% '.format(
+                key_masi, value_masi*100.0))
+            print('CPU time: {:.2f} s'.format(time.time() - t0))
+        return output_dict
+
+    def plot_props(self,
+                   reaction_label: str,
+                   key: str, 
+                   overpotential_vector: np.ndarray,
+                   pH: float,
+                   initial_sur_coverage: list=None,
+                   species: str='CO*',
+                   temperature: float=298.0,
+                   pressure: float=1e5,
+                   gas_composition: np.ndarray=None,
+                   verbose: int=0,
+                   jac: bool=True):
+        """
+        Returns the plot of the desired key vs the defined potential range.
+        Args:
+            reaction_label(str): Label of the reaction of interest.
+            key (str): the key for which plot vs potential is needed
+            overpotential_vector(ndarray): applied overpotential vector [V].
+            pH(float): pH of the electrolyte solution [-].
+            initial_sur_coverage(ndarray): initial surface coverage and gas composition [-]
+            species (str): if the key is theta, mention the adsorbate for which the plot is needed
+            temperature(float): Temperature of the system [K].
+            pressure(float): Absolute pressure of the system [Pa].
+            verbose(bool): 0=; 1=.
+            jac(bool): Inclusion of the analytical Jacobian for ODE numerical solution.
+        """
+        
+        exp = []
+        key_vector = np.zeros(len(overpotential_vector))
+        overpotential_vector_RHE = overpotential_vector + 0.059*pH
+        if reaction_label not in self.grl.keys():
+            raise ValueError("Unexisting reaction label")
+        print("Temperature: {} K    Pressure: {} bar    pH: {}".format(temperature, int(pressure/1e5), pH))
+        print("")
+        time0 = time.time()
+
+        for i in range(len(overpotential_vector)):
+            exp.append(self.kinetic_run(overpotential_vector[i],
+                                           pH,
+                                           initial_sur_coverage=initial_sur_coverage,
+                                           temperature=temperature,
+                                           pressure=pressure,
+                                           gas_composition=gas_composition,
+                                           verbose=1,
+                                           jac=jac))
+            if key=='theta':
+                key_vector[i] = exp[i][key][species]
+            else: 
+                key_vector[i] = exp[i][key]
+            print("Overpotential = {} V    {} value = {:.2e} ".format(overpotential_vector[i], key, key_vector[i]))
+        fig, ax = plt.subplots(2,figsize=(7,6), dpi=500)
+        ax[0].plot(overpotential_vector, key_vector, 'ok', linewidth=4)
+        if key == 'theta':
+            ax[0].set(xlabel="Applied Potential vs SHE", ylabel="{} coverage".format(species))
+        else:
+            ax[0].set(xlabel="Applied Potential vs SHE", ylabel="{}".format(key))
+        ax[0].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+        ax[0].grid()
+
+        ax[1].plot(overpotential_vector_RHE, key_vector, 'ok', linewidth=4)
+        if key == 'theta':
+            ax[1].set(xlabel="Applied Potential vs RHE", ylabel="{} coverage".format(species))
+        else:
+            ax[1].set(xlabel="Applied Potential vs RHE", ylabel="{}".format(key))
+        ax[1].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+        ax[1].grid()
+
+
+        plt.tight_layout()
+        if key == 'theta':
+            plt.savefig("{}_overpotential.png".format(species)) 
+        else:
+            plt.savefig("{}_overpotential.png".format(key))
+        plt.show()
+        return key_vector
+
+    def tafel_plot(self,
+                   reaction_label: str,
+                   overpotential_vector: np.ndarray,
+                   pH: float,
+                   cation_conc: float,
+                   potential_dl: float,
+                   initial_sur_coverage: list=None,
+                   temperature: float=298.0,
+                   pressure: float=1e5,
+                   gas_composition: np.ndarray=None,
+                   verbose: int=0,
+                   jac: bool=True):
+        """
+        Returns the Tafel plot for the defined potential range.
+        Args:
+            reaction_label(str): Label of the reaction of interest.
+            overpotential_vector(ndarray): applied overpotential vector [V].
+            pH(float): pH of the electrolyte solution [-].
+            
+            initial_conditions(ndarray): initial surface coverage and gas composition [-]
+            temperature(float): Temperature of the system [K].
+            pressure(float): Absolute pressure of the system [Pa].
+            verbose(bool): 0=; 1=.
+            jac(bool): Inclusion of the analytical Jacobian for ODE numerical solution.
+        """
+        exp = []
+        j_vector = np.zeros(len(overpotential_vector))
+        overpotential_vector_RHE = overpotential_vector + 0.059*pH
+        if reaction_label not in self.grl.keys():
+            raise ValueError("Unexisting reaction label")
+        print("{}: Tafel slope experiment for {}".format(self.name, reaction_label))
+        print("Temperature: {} K    Pressure: {} bar    pH: {}".format(temperature, int(pressure/1e5), pH))
+        print("")
+        time0 = time.time()
+        for i in range(len(overpotential_vector)):
+            exp.append(self.kinetic_run(overpotential_vector[i],
+                                           pH,
+                                           cation_conc=cation_conc,
+                                           potential_dl=potential_dl,
+                                           initial_sur_coverage=initial_sur_coverage,
+                                           temperature=temperature,
+                                           pressure=pressure,
+                                           gas_composition=gas_composition,
+                                           verbose=1,
+                                           jac=jac))
+            j_vector[i] = exp[i]['j_{}'.format(reaction_label)]
+            if overpotential_vector[i] < 0:
+                print("Overpotential = {} V    {} Current Density = {:.2e} mA cm-2".format(overpotential_vector[i],
+                                                                                           reaction_label,
+                                                                                           j_vector[i]/10))
+            else:
+                print("Overpotential = +{} V    {} Current Density = {:.2e} mA cm-2".format(overpotential_vector[i],
+                                                                                           reaction_label,
+                                                                                           j_vector[i]/10))
+        print("------------------------------------------------------------------")
+        tafel_slope = calc_tafel_slope(overpotential_vector, j_vector)[0]
+        f = F / R / temperature
+        alfa = 1 + (tafel_slope / f) # Global charge transfer coefficient
+        print("Tafel slope = {:.2f} mV    alfa = {:.2f}".format(tafel_slope * 1000.0, alfa))
+        print("CPU time: {:.2f} s".format(time.time() - time0)) 
+        fig, ax = plt.subplots(3, figsize=(7,9), dpi=500)
+        ax[0].plot(overpotential_vector, j_vector/10, 'ok', linewidth=4)
+        ax[0].set(xlabel="Applied Potential vs SHE", ylabel="j / mA $cm^{-2}$", title="j vs U_SHE")
+        ax[0].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+        ax[0].grid()
+        ax[1].plot(overpotential_vector_RHE, j_vector/10, 'ok', linewidth=4)
+        ax[1].set(xlabel="Applied Potential vs RHE", ylabel="j / mA $cm^{-2}$", title="j vs U_RHE")
+        ax[1].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+        ax[1].grid()
+        ax[2].plot(overpotential_vector, np.log10(abs(j_vector)), 'ok')
+        ax[2].set(title="{}: Tafel plot".format(self.name), xlabel="Applied Potential / V vs SHE", ylabel="log10(|j|)")
+        ax[2].grid()
+        plt.tight_layout()
+        plt.savefig("{}_tafel_{}.png".format(reaction_label,pH))            
+        plt.show()
+        return tafel_slope     
+
+    def j_potential(self,
+                   reaction_label,
+                   label,
+                   overpotential_vector: np.ndarray,
+                   pH: float,
+                   color,
+                   initial_sur_coverage: list=None,
+                   set_y_lim : list=[-20,10],
+                   temperature: float=298.0,
+                   pressure: float=1e5,
+                   gas_composition: np.ndarray=None,
+                   verbose: int=0,
+                   jac: bool=True):
+        """
+        Returns the current densities vs potential for different products for the defined potential range.
+        Args:
+            reaction_label(str): Label of the reaction of interest.
+            overpotential_vector(ndarray): applied overpotential vector [V].
+            pH(float): pH of the electrolyte solution [-].
+            initial_conditions(ndarray): initial surface coverage and gas composition [-]
+            temperature(float): Temperature of the system [K].
+            pressure(float): Absolute pressure of the system [Pa].
+            verbose(bool): 0=; 1=.
+            jac(bool): Inclusion of the analytical Jacobian for ODE numerical solution.
+        """
+        exp = []
+        j_vector = np.zeros((len(reaction_label),len(overpotential_vector)))
+        overpotential_vector_RHE = overpotential_vector + 0.059*pH
+        for rxn_label in reaction_label:
+            if rxn_label not in self.grl.keys():
+                raise ValueError("Unexisting reaction label")
+        print("{}: Tafel slope experiment for {}".format(self.name, reaction_label))
+        print("Temperature: {} K    Pressure: {} bar    pH: {}".format(temperature, int(pressure/1e5), pH))
+        print("")
+        time0 = time.time()
+        #print(j_vector)
+        for i in range(len(overpotential_vector)):
+            exp.append(self.kinetic_run(overpotential_vector[i],
+                                           pH,
+                                           initial_sur_coverage=initial_sur_coverage,
+                                           temperature=temperature,
+                                           pressure=pressure,
+                                           gas_composition=gas_composition,
+                                           verbose=1,
+                                           jac=jac))
+            #print(len(reaction_label))
+            for j in range(len(reaction_label)):
+                #print(i,j)
+                j_vector[j][i] = np.log(exp[i]['j_{}'.format(reaction_label[j])]/10)
+                #print(j_vector)
+            if overpotential_vector[i] < 0:
+                print("Overpotential = {} V   log of {} Current Density = {:.2e} mA cm-2".format(overpotential_vector[i],
+                                                                                           reaction_label[0],
+                                                                                           j_vector[0][i]/10))
+            else:
+                print("Overpotential = +{} V  log of {} Current Density = {:.2e} mA cm-2".format(overpotential_vector[i],
+                                                                                           reaction_label[0],
+                                                                                           j_vector[0][i]/10))
+        print("------------------------------------------------------------------")
+        fig, ax = plt.subplots(2, figsize=(7,9), dpi=500)
+        for k in range(len(reaction_label)):
+            print(j_vector[k])
+            ax[0].plot(overpotential_vector, j_vector[k], color=color[k], label=label[k])
+            ax[0].set(xlabel="Applied Potential vs SHE", ylabel="ln(j / mA $cm^{-2})$", title="Current Density vs $U_{SHE}$")
+            #ax[0].grid()
+            ax[0].legend()
+            ax[0].set_ylim(set_y_lim)
+            ax[1].plot(overpotential_vector_RHE, j_vector[k], color=color[k], label=label[k])
+            ax[1].set(xlabel="Applied Potential vs RHE", ylabel="ln(j / mA $cm^{-2})$", title="Current Density vs $U_{RHE}$")
+            #ax[1].grid()
+            ax[1].legend()
+            ax[1].set_ylim(set_y_lim)
+            ax
+        plt.tight_layout()
+        plt.savefig("{}_tafel_{}.png".format(reaction_label,pH))            
+        plt.show()
+        return j_vector 
+
+    
+    def degree_of_rate_control(self,
+                               global_reaction_label: str,
+                               ts_int_label: str,
+                               overpotential: float,
+                               pH: float,
+                               cation_conc: float,
+                               potential_dl: float,
+                               initial_sur_coverage: np.ndarray=None,
+                               temperature: float=298.0,
+                               pressure: float=1e5,
+                               gas_composition: list=None,
+                               dg: float=1.0E-6,
+                               jac: bool=True,
+                               verbose: int=0):
+        """
+        Calculates the degree of rate control(DRC) for the selected transition state or intermediate species.
+        Args:
+            global_reaction_label(str): Global reaction for which DRC/DSC are computed
+            ts_int_label(str): Transition state/surface intermediate for which DRC/DSC are computed
+            overpotential_vector(ndarray): applied overpotential vector [V].
+            pH(float): pH of the electrolyte solution [-].
+            
+            temperature(float): Temperature of the experiment [K]
+            pressure(float): Partial pressure of the gaseous species [Pa]
+            gas_composition(list): Molar fraction of the gaseous species [-]
+            initial_conditions(nparray): Initial surface coverage [-]
+            dg(float): Deviation applied to selected Gibbs energy to calculate the DRC/DSC values.
+                       Default=1E-6 eV
+            jac(bool): Inclusion of the analytical Jacobian for ODE numerical solution.
+            verbose(int): 1= Print essential info
+                          0= Print additional info
+        Returns:
+            List with DRC and DSC of TS/intermediate for the selected reaction [-]
+        """
+        if (global_reaction_label != self.target_label) and (global_reaction_label not in self.by_products_label):
+            raise Exception(
+                'Reaction label must be related to a global reaction!')
+        switch_ts_int = 0  # 0=TS 1=intermediate species
+        if 'R' not in ts_int_label:
+            switch_ts_int = 1
+        index = 0
+        if switch_ts_int == 0:
+            index = int(ts_int_label[1:]) - 1
+        else:
+            index = self.species_sur.index(ts_int_label)
+
+        if verbose == 0:
+            if switch_ts_int == 0:
+                print('{}: DRC analysis for elementary reaction R{} wrt {} reaction'.format(self.name,
+                                                                                            index+1,
+                                                                                            global_reaction_label))
+            else:
+                print('{}: DRC and DSC for intermediate {} wrt {} reaction'.format(self.name,
+                                                                                   self.species_sur[index],
+                                                                                   global_reaction_label))
+            print('Temperature = {}K    Pressure = {:.1f}bar'.format(
+                temperature, pressure/1e5))
+            sgas = []
+            for i in self.species_gas:
+                sgas.append(i.strip('(g)'))
+            str_list = ['{}={:.1f}%  '.format(i, j) for i, j in zip(sgas,
+                                                                    list(np.array(gas_composition)*100.0))]
+            gas_string = 'Gas composition: '
+            for i in str_list:
+                gas_string += i
+            print(gas_string+"\n")          
+            
+        r = np.zeros(2)
+        s = np.zeros(2)
+        if switch_ts_int == 0:    # Transition state
+            if self.g_ts[index] != 0.0:  # Originally activated reaction
+                for i in range(2):
+                    mk_object = electroMKM('i',
+                                    self.input_rm,
+                                    self.input_g,
+                                    t_ref=self.t_ref,
+                                    inerts=self.inerts)
+                    mk_object.dg_barrier[index] += dg*(-1)**(i)
+                    mk_object.dg_barrier_rev[index] += dg*(-1)**(i)
+                    run = mk_object.kinetic_run(overpotential,
+                                                pH,
+                                                cation_conc,
+                                                potential_dl,
+                                                initial_sur_coverage=initial_sur_coverage,
+                                                temperature=temperature,
+                                                pressure=pressure,
+                                                gas_composition=gas_composition,
+                                                verbose=1,
+                                                jac=jac)
+                    r[i] = list(run['r'].values())[self.grl[global_reaction_label]]
+                    r_tot = list(run['r'].values())
+                    r_tot = [r_tot[i] for i in range(self.NR) if i in list(self.grl.values())]
+                    s[i] = r[i] / sum(r_tot)
+                #print(r)
+                drc = (-K_B * temperature) * (np.log(abs(r[0])) - np.log(abs(r[1]))) / (2 * dg)
+                dsc = (-K_B * temperature) * (np.log(s[0]) - np.log(s[1])) / (2 * dg)
+            else:  # Originally unactivated reaction
+                for i in range(2):
+                    mk_object = electroMKM('i',
+                                    self.input_rm,
+                                    self.input_g,
+                                    t_ref=self.t_ref,
+                                    inerts=self.inerts)
+                    if mk_object.dg_reaction[index] < 0.0:
+                        mk_object.dg_barrier[index] = dg * i
+                        mk_object.dg_barrier_rev[index] += dg * i
+                    else:
+                        mk_object.dg_barrier[index] = mk_object.dg_reaction[index] + dg * i
+                    run = mk_object.kinetic_run(overpotential,
+                                                pH,
+                                                cation_conc,
+                                                potential_dl,
+                                                initial_sur_coverage=initial_sur_coverage,
+                                                temperature=temperature,
+                                                pressure=pressure,
+                                                gas_composition=gas_composition,
+                                                verbose=1,
+                                                jac=jac)
+                    r[i] = list(run['r'].values())[self.grl[global_reaction_label]]
+                    r_tot = list(run['r'].values())
+                    r_tot = [r_tot[i] for i in range(self.NR) if i in list(self.grl.values())]
+                    s[i] = r[i] / sum(r_tot)
+                drc = (-K_B*temperature) * (np.log(abs(r[1]))-np.log(abs(r[0]))) / dg
+                dsc = (-K_B*temperature) * (np.log(s[1])-np.log(s[0])) / dg
+        else:  # Surface intermediate
+            for i in range(2):
+                mk_object = electroMKM('i',
+                                       self.input_rm,
+                                       self.input_g,
+                                       t_ref=self.t_ref,
+                                       inerts=self.inerts)
+                mk_object.g_species[index] += dg * (-1) ** (i)
+                for j in range(mk_object.NR):
+                    mk_object.dg_reaction[j] = np.sum(
+                        mk_object.v_matrix[:, j]*np.array(mk_object.g_species))
+                    condition1 = mk_object.g_ts[j] != 0.0
+                    ind = list(np.where(mk_object.v_matrix[:, j] == -1)[0]) + list(
+                        np.where(mk_object.v_matrix[:, j] == -2)[0])
+                    gis = sum([mk_object.g_species[k] *
+                              mk_object.v_matrix[k, j]*(-1) for k in ind])
+                    condition2 = mk_object.g_ts[j] > max(
+                        gis, gis+mk_object.dg_reaction[j])
+                    if condition1 and condition2:  # Activated elementary reaction
+                        mk_object.dg_barrier[j] = mk_object.g_ts[j] - gis
+                        mk_object.dg_barrier_rev[j] = mk_object.dg_barrier[j] - \
+                            mk_object.dg_reaction[j]
+                    else:  # Unactivated elementary reaction
+                        if mk_object.dg_reaction[j] < 0.0:
+                            mk_object.dg_barrier[j] = 0.0
+                            mk_object.dg_barrier_rev[j] = -mk_object.dg_reaction[j]
+                        else:
+                            mk_object.dg_barrier[j] = mk_object.dg_reaction[j]
+                            mk_object.dg_barrier_rev[j] = 0.0
+                run = mk_object.kinetic_run(overpotential,
+                                            pH,
+                                            cation_conc,
+                                            potential_dl,
+                                            initial_sur_coverage=initial_sur_coverage,
+                                            temperature=temperature,
+                                            pressure=pressure,
+                                            gas_composition=gas_composition,
+                                            verbose=1,
+                                            jac=jac)
+                r[i] = list(run['r'].values())[self.grl[global_reaction_label]]
+                r_tot = list(run['r'].values())
+                r_tot = [r_tot[i] for i in range(self.NR) if i in list(self.grl.values())]
+                s[i] = r[i] / sum(r_tot)
+            #print(temperature,r[0],r[1],dg)
+            drc = (-K_B*temperature) * (np.log(abs(r[0]))-np.log(abs(r[1]))) / (2*dg)
+            dsc = (-K_B*temperature) * (np.log(s[0])-np.log(s[1])) / (2*dg)
+        print('DRC = {:0.2f}'.format(drc))
+        return drc, dsc
+
+    def drc_full(self,
+                 global_reaction_label,
+                 overpotential,
+                 pH,
+                 cation_conc,
+                 potential_dl,
+                 initial_sur_coverage=None,
+                 temperature=298.0,
+                 pressure=1e5,
+                 gas_composition=None,
+                 dg=1.0E-6,
+                 jac=False):
+        """
+        Wrapper function that calculates the degree of rate control of all
+        intermediates and transition states at the desired conditions.        
+        Args:
+            global_reaction_label(str): Global reaction for which DRC/DSC are computed
+            overpotential_vector(ndarray): applied overpotential vector [V].
+            pH(float): pH of the electrolyte solution [-].
+            temperature(float): Temperature of the experiment [K]
+            pressure(float): Partial pressure of the gaseous species [Pa]
+            gas_composition(list): Molar fraction of the gaseous species [-]
+            initial_conditions(nparray): Initial surface coverage [-]
+            dg(float): Deviation applied to selected Gibbs energy to calculate the DRC/DSC values.
+                       Default=1E-6 eV
+            jac(bool): Inclusion of the analytical Jacobian for ODE numerical solution.
+            verbose(int): 1= Print essential info
+                          0= Print additional info
+
+        Returns:
+            Two Pandas DataFrames with final all results.        
+        """
+        print('{}: Full DRC and DSC analysis wrt {} global reaction'.format(self.name,
+                                                                            global_reaction_label))
+        print('Temperature = {}K    Pressure = {:.1f}bar'.format(
+            temperature, pressure/1e5))
+        sgas = []
+        for i in self.species_gas:
+            sgas.append(i.strip('(g)'))
+        str_list = ['{}={:.1f}%  '.format(i, j) for i, j in zip(sgas,
+                                                                list(np.array(gas_composition)*100.0))]
+        gas_string = 'Gas composition: '
+        for i in str_list:
+            gas_string = gas_string + i
+        print(gas_string)
+        if (global_reaction_label != self.target_label) and (global_reaction_label not in self.by_products_label):
+            raise Exception('Unexisting global reaction string.')
+        if dg > 0.1:
+            raise Exception(
+                'Too high perturbation (recommended lower than 1e-6 eV)')
+        drc_ts = np.zeros(self.NR)
+        dsc_ts = np.zeros(self.NR)
+        drc_int = np.zeros(self.NC_sur)
+        dsc_int = np.zeros(self.NC_sur)
+        for reaction in range(self.NR):
+            print('')
+            print('R{}'.format(reaction+1))
+            drc_ts[reaction], dsc_ts[reaction] = self.degree_of_rate_control(global_reaction_label,
+                                                                            'R{}'.format(reaction+1),
+                                                                            overpotential,
+                                                                            pH,
+                                                                            cation_conc,
+                                                                            potential_dl,
+                                                                            initial_sur_coverage=initial_sur_coverage,
+                                                                            temperature=temperature,
+                                                                            pressure=pressure,
+                                                                            gas_composition=gas_composition,
+                                                                            dg=dg,
+                                                                            jac=jac,
+                                                                            verbose=1)
+        for species in range(self.NC_sur):
+            print('')
+            print('{}'.format(self.species_sur[species]))
+            drc_int[species], dsc_int[species] = self.degree_of_rate_control(global_reaction_label,
+                                                                             self.species_sur[species],
+                                                                             overpotential,
+                                                                             pH,
+                                                                             cation_conc,
+                                                                             potential_dl,
+                                                                             initial_sur_coverage=initial_sur_coverage,
+                                                                             temperature=temperature,
+                                                                             pressure=pressure,
+                                                                             gas_composition=gas_composition,
+                                                                             dg=dg,
+                                                                             jac=jac,
+                                                                             verbose=1)
+        r = []
+        for i in range(self.NR):
+            r.append('R{}'.format(i+1))
+        #print(drc_ts)
+        drsc_ts = np.concatenate((np.array([drc_ts]).T,
+                                  np.array([dsc_ts]).T),
+                                 axis=1)
+        df_drsc_ts = pd.DataFrame(np.round(drsc_ts, decimals=2),
+                                  index=r,
+                                  columns=['DRC', 'DSC'])
+        df_drsc_ts.to_csv("X_{}_{}_{}_ts.csv".format(global_reaction_label,
+                                                     int(temperature),
+                                                     int(pressure/1e5)))
+        np.save('DRC.npy',drc_ts)
